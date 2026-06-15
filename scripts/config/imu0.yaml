@@ -1,0 +1,7 @@
+accelerometer_noise_density: 0.01      # m/s^2/sqrt(Hz) — ZED 2i BMI055
+accelerometer_random_walk: 0.0002      # m/s^3/sqrt(Hz)
+gyroscope_noise_density: 0.0004        # rad/s/sqrt(Hz)
+gyroscope_random_walk: 0.00002         # rad/s^2/sqrt(Hz)
+model: calibrated
+rostopic: /imu0
+update_rate: 198

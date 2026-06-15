@@ -1,0 +1,7 @@
+cam_overlaps: [1]
+camera_model: pinhole
+distortion_coeffs: [0.0, 0.0, 0.0, 0.0]  # Imagens já retificadas
+distortion_model: radtan
+intrinsics: [264.4, 264.4, 320.0, 180.0]  # fx, fy, cx, cy para 640x360
+resolution: [640, 360]
+rostopic: /zed/zed_node/left_gray/image_rect_gray
