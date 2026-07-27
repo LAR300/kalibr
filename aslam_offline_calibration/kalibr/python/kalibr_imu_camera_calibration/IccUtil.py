@@ -251,6 +251,16 @@ def generateReport(cself, filename="report.pdf", showOnScreen=True):
             figs.append(f)
             offset += len(cself.CameraChain.camList)
 
+    #plot DVL stuff
+    if getattr(cself, "DvlList", None):
+        for didx, dvl in enumerate(cself.DvlList):
+            f = pl.figure(offset+didx)
+            title = "dvl{0}: velocity residuals".format(didx)
+            plots.plotDvlVelocityError(cself, didx, fno=f.number, noShow=True)
+            plotter.add_figure(title, f)
+            figs.append(f)
+        offset += len(cself.DvlList)
+
     #write to pdf
     pdf=PdfPages(filename)
     for fig in figs:

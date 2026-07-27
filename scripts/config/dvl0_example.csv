@@ -1,0 +1,19 @@
+# Schema do CSV do DVL (Water Linked A50) para o kalibr_calibrate_dvl.
+# Uma linha por report de velocidade (msg dvl_msgs/DVL do driver ROS 2 paagutie/dvl-a50).
+# Extraia este CSV no lado ROS 2 (ver tarefa 3.4). Colunas (16), separadas por virgula:
+#
+#   timestamp_ns : timestamp da medicao em nanossegundos (usar time_of_validity do A50, se disponivel)
+#   vx, vy, vz   : velocidade 3D do corpo no frame do DVL [m/s] (campo velocity)
+#   cov00..cov22 : covariancia 3x3 da velocidade, row-major (9 valores) [(m/s)^2] (campo covariance)
+#   velocity_valid : 1 se o report e valido (bottom-lock), 0 caso contrario
+#   fom          : figure of merit [m/s] (campo fom)
+#   altitude     : altitude/altura acima do fundo [m] (campo altitude)
+#
+# Linhas iniciadas por '#' sao comentarios. velocity_valid como inteiro 0/1.
+#
+# timestamp_ns,vx,vy,vz,cov00,cov01,cov02,cov10,cov11,cov12,cov20,cov21,cov22,velocity_valid,fom,altitude
+1700000000000000000,0.152,-0.031,0.004,4.0e-4,0,0,0,4.0e-4,0,0,0,4.0e-4,1,0.002,2.10
+1700000000125000000,0.148,-0.028,0.006,4.1e-4,0,0,0,4.0e-4,0,0,0,4.2e-4,1,0.002,2.09
+1700000000250000000,0.140,-0.025,0.005,4.0e-4,0,0,0,4.0e-4,0,0,0,4.0e-4,1,0.003,2.09
+1700000000375000000,0.000,0.000,0.000,1.0e0,0,0,0,1.0e0,0,0,0,1.0e0,0,9.999,0.05
+1700000000500000000,0.131,-0.019,0.007,4.3e-4,0,0,0,4.1e-4,0,0,0,4.0e-4,1,0.003,2.08

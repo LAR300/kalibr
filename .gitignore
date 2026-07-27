@@ -39,6 +39,7 @@ CMakeLists.txt.user
 
 *.mat
 *.csv
+!scripts/config/dvl0_example.csv
 *.asv
 *.jpg
 

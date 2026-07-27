@@ -350,3 +350,28 @@ class CameraPlot:
             self.cam_z[0].set_data(xy)
             self.cam_z[0].set_3d_properties(z)
             pl.pause(0.00001)
+
+
+def plotDvlVelocityError(cself, didx, fno=1, clearFigure=True, noShow=False):
+    """Residuos de velocidade do DVL por eixo (predito - medido), com bandas +-3 sigma."""
+    res = cself.DvlList[didx].getVelocityResiduals()  # (N,3) [m/s]
+    f = pl.figure(fno)
+    if clearFigure:
+        f.clf()
+
+    if len(res) == 0:
+        pl.text(0.3, 0.5, "no DVL residuals", fontsize=12)
+        return
+
+    labels = ['v_x', 'v_y', 'v_z']
+    n = res.shape[0]
+    for i in range(3):
+        pl.subplot(3, 1, i + 1)
+        pl.plot(res[:, i])
+        sigma = np.std(res[:, i]) if n > 1 else 0.0
+        pl.plot(np.array([0., n]), 3.0 * sigma * np.ones(2), 'r--')
+        pl.plot(np.array([0., n]), -3.0 * sigma * np.ones(2), 'r--')
+        pl.xlim([0., n])
+        pl.xlabel('error index')
+        pl.ylabel('{0} residual (m/s)'.format(labels[i]))
+        pl.grid('on')

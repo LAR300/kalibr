@@ -1,0 +1,284 @@
+#!/usr/bin/env python
+print("importing libraries")
+import sm
+import kalibr_common as kc
+from kalibr_imu_camera_calibration import *
+
+import numpy as np
+import argparse
+import signal
+import sys
+import os
+
+# make numpy print prettier
+np.set_printoptions(suppress=True)
+
+
+def signal_exit(signal, frame):
+    print("")
+    sm.logWarn("Shutting down! (CTRL+C)")
+    sys.exit(1)
+
+
+# helper to constrain certain arguments to be specified only once
+class Once(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest) is not None:
+            msg = '{o} can only be specified once'.format(o=option_string)
+            raise argparse.ArgumentError(None, msg)
+        setattr(namespace, self.dest, values)
+
+
+def parseArgs():
+    class KalibrArgParser(argparse.ArgumentParser):
+        def error(self, message):
+            self.print_help()
+            sm.logError('%s' % message)
+            sys.exit(2)
+
+        def format_help(self):
+            formatter = self._get_formatter()
+            formatter.add_text(self.description)
+            formatter.add_usage(self.usage, self._actions, self._mutually_exclusive_groups)
+            for action_group in self._action_groups:
+                formatter.start_section(action_group.title)
+                formatter.add_text(action_group.description)
+                formatter.add_arguments(action_group._group_actions)
+                formatter.end_section()
+            formatter.add_text(self.epilog)
+            return formatter.format_help()
+
+    usage = """
+    Calibra o extrinseco (T_dvl_imu), a escala de velocidade e o offset temporal de um DVL contra a
+    IMU de referencia, reusando a calibracao camera-IMU submersa ja feita pelo Kalibr.
+
+    %(prog)s --bag MYROSBAG.bag --cams camchain-imucam.yaml --imu imu.yaml \\
+             --target aprilgrid.yaml --dvl dvl0.yaml --dvl-csv dvl0.csv
+
+    - O bag deve conter camera(s) + IMU (a spline de pose e reconstruida dele).
+    - --cams: camchain-imucam.yaml (com T_cam_imu) da calibracao camera-IMU existente.
+    - --dvl: dvl0.yaml (config do DVL). O stream do DVL vem de --dvl-csv (schema em
+             scripts/config/dvl0_example.csv) ou do campo 'csv' do dvl0.yaml.
+    - Por padrao (Modo A) a calibracao camera-IMU e reusada FIXA; --recompute-cam-imu ativa o Modo B (joint).
+    """
+
+    parser = KalibrArgParser(
+        description='Calibra os parametros espaciais/temporais de um DVL contra a IMU de referencia.',
+        usage=usage)
+
+    groupData = parser.add_argument_group('Dataset source')
+    groupData.add_argument('--bag', dest='bagfile', nargs=1, required=True, action=Once,
+                           help='Ros bag com imagens e IMU (topicos definidos nos yamls).')
+    groupData.add_argument('--bag-from-to', metavar='bag_from_to', type=float, nargs=2,
+                           help='Usar os dados do bag deste ate este instante [s].')
+    groupData.add_argument('--bag-freq', metavar='bag_freq', type=float,
+                           help='Frequencia de extracao de features [hz].')
+    groupData.add_argument('--perform-synchronization', action='store_true',
+                           dest='perform_synchronization',
+                           help='Sincronizacao de relogio (Zhang et al. 2002).')
+
+    groupCam = parser.add_argument_group('Camera system configuration')
+    groupCam.add_argument('--cams', dest='chain_yaml', action=Once, required=True,
+                          help='camchain-imucam.yaml (intrinsecos + T_cam_imu) da calibracao existente.')
+    groupCam.add_argument('--recompute-camera-chain-extrinsics', action='store_true',
+                          dest='recompute_chain_extrinsics', help='Recalcular baselines cam-cam (debug).')
+    groupCam.add_argument('--reprojection-sigma', type=float, default=1.0, dest='reprojection_sigma',
+                          help='Desvio padrao dos cantos reprojetados [px]. (default: %(default)s)')
+
+    groupImu = parser.add_argument_group('IMU configuration')
+    groupImu.add_argument('--imu', dest='imu_yamls', nargs='+', required=True, action=Once,
+                          help='Yaml(s) de ruido da IMU. A primeira e a IMU de referencia.')
+    groupImu.add_argument('--imu-delay-by-correlation', action='store_true', dest='estimate_imu_delay',
+                          help='Estimar delay entre IMUs por correlacao.')
+    groupImu.add_argument('--imu-models', nargs='+', dest='imu_models', action=Once,
+                          help="Modelos de IMU: 'calibrated', 'scale-misalignment', "
+                               "'scale-misalignment-size-effect'.")
+
+    groupDvl = parser.add_argument_group('DVL configuration')
+    groupDvl.add_argument('--dvl', dest='dvl_yaml', action=Once, required=True,
+                          help='Config do DVL (ver scripts/config/dvl0.yaml).')
+    groupDvl.add_argument('--dvl-csv', dest='dvl_csv', action=Once,
+                          help='CSV do DVL (16 col; ver scripts/config/dvl0_example.csv). '
+                               'Sobrepoe o campo csv do dvl0.yaml.')
+    groupDvl.add_argument('--recompute-cam-imu', action='store_true', dest='recompute_cam_imu',
+                          help='Modo B: co-otimizar camera-IMU-DVL (por padrao a cam-IMU e fixa, Modo A).')
+    groupDvl.add_argument('--huber-dvl', type=float, default=-1, dest='huber_dvl',
+                          help='Largura do M-estimator de Huber para os residuos do DVL (default: sem robustez).')
+
+    groupTarget = parser.add_argument_group('Calibration target')
+    groupTarget.add_argument('--target', dest='target_yaml', required=True, action=Once,
+                             help='Config do alvo de calibracao.')
+
+    groupOpt = parser.add_argument_group('Optimization options')
+    groupOpt.add_argument('--no-time-calibration', action='store_true', dest='no_time',
+                          help='Desabilita a calibracao temporal camera-IMU.')
+    groupOpt.add_argument('--max-iter', type=int, default=30, dest='max_iter',
+                          help='Max. iteracoes (default: %(default)s).')
+    groupOpt.add_argument('--recover-covariance', action='store_true', dest='recover_cov',
+                          help='Recuperar a covariancia dos design variables.')
+    groupOpt.add_argument('--timeoffset-padding', type=float, default=30.e-3, dest='timeoffset_padding',
+                          help='Faixa maxima do timeoffset durante a estimacao [s] (default: %(default)s).')
+
+    outputSettings = parser.add_argument_group('Output options')
+    outputSettings.add_argument('--show-extraction', action='store_true', dest='showextraction',
+                                help='Mostrar a extracao do alvo. (desabilita plots)')
+    outputSettings.add_argument('--extraction-stepping', action='store_true', dest='extractionstepping',
+                                help='Mostrar cada imagem na extracao. (desabilita plots)')
+    outputSettings.add_argument('--verbose', action='store_true', dest='verbose',
+                                help='Saida verbosa (desabilita plots).')
+    outputSettings.add_argument('--dont-show-report', action='store_true', dest='dontShowReport',
+                                help='Nao mostrar o relatorio na tela ao final.')
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(2)
+
+    try:
+        parsed = parser.parse_args()
+    except Exception:
+        sys.exit(2)
+
+    if parsed.verbose:
+        parsed.showextraction = True
+    if parsed.showextraction or parsed.extractionstepping or parsed.verbose:
+        parsed.dontShowReport = True
+
+    return parsed
+
+
+def main():
+    parsed = parseArgs()
+
+    if parsed.verbose:
+        sm.setLoggingLevel(sm.LoggingLevel.Debug)
+    else:
+        sm.setLoggingLevel(sm.LoggingLevel.Info)
+    signal.signal(signal.SIGINT, signal_exit)
+
+    # --- IMUs ---
+    print("Initializing IMUs:")
+    if len(parsed.imu_yamls) == 1 and not parsed.imu_models:
+        parsed.imu_models = ['calibrated']
+    elif len(parsed.imu_yamls) != len(parsed.imu_models):
+        sm.logError("Number of IMU yamls and models has to match.")
+        sys.exit(2)
+
+    imus = list()
+    for i, (imu_yaml, imu_model) in enumerate(zip(parsed.imu_yamls, parsed.imu_models)):
+        imuConfig = kc.ImuParameters(imu_yaml)
+        imuConfig.printDetails()
+        if imu_model == 'calibrated':
+            imus.append(sens.IccImu(imuConfig, parsed, isReferenceImu=(not imus),
+                                    estimateTimedelay=parsed.estimate_imu_delay, imuNr=i))
+        elif imu_model == 'scale-misalignment':
+            imus.append(sens.IccScaledMisalignedImu(imuConfig, parsed, isReferenceImu=(not imus),
+                                                    estimateTimedelay=parsed.estimate_imu_delay, imuNr=i))
+        elif imu_model == 'scale-misalignment-size-effect':
+            imus.append(sens.IccScaledMisalignedSizeEffectImu(imuConfig, parsed, isReferenceImu=(not imus),
+                                                              estimateTimedelay=parsed.estimate_imu_delay, imuNr=i))
+        else:
+            sm.logError("Model {0} is currently unsupported.".format(imu_model))
+            sys.exit(2)
+
+    # --- target + camera chain ---
+    targetConfig = kc.CalibrationTargetParameters(parsed.target_yaml)
+    print("Initializing calibration target:")
+    targetConfig.printDetails()
+
+    print("Initializing camera chain:")
+    chain = kc.CameraChainParameters(parsed.chain_yaml)
+    chain.printDetails()
+    camChain = sens.IccCameraChain(chain, targetConfig, parsed)
+
+    # --- DVL ---
+    print("Initializing DVL:")
+    dvlConfig = kc.DvlParameters(parsed.dvl_yaml)
+    dvlConfig.printDetails()
+    dvl = sens.IccDvl(dvlConfig, parsed, csvfile=parsed.dvl_csv)
+
+    # --- calibrator ---
+    iCal = IccCalibrator()
+    iCal.registerCamChain(camChain)
+    for imu in imus:
+        iCal.registerImu(imu)
+        if imu is not imus[0]:
+            imu.findOrientationPrior(imus[0])
+    iCal.registerDvl(dvl)
+
+    mode = "B (joint camera-IMU-DVL)" if parsed.recompute_cam_imu else "A (camera-IMU reused fixed)"
+    print("")
+    print("Building the problem  [Mode {0}]".format(mode))
+    iCal.buildProblem(splineOrder=6,
+                      poseKnotsPerSecond=100,
+                      biasKnotsPerSecond=50,
+                      doPoseMotionError=False,
+                      doBiasMotionError=True,
+                      blakeZisserCam=-1,
+                      huberAccel=-1,
+                      huberGyro=-1,
+                      noTimeCalibration=parsed.no_time,
+                      noChainExtrinsics=(not parsed.recompute_chain_extrinsics),
+                      maxIterations=parsed.max_iter,
+                      timeOffsetPadding=parsed.timeoffset_padding,
+                      recompute_cam_imu=parsed.recompute_cam_imu,
+                      huberDvl=parsed.huber_dvl,
+                      verbose=parsed.verbose)
+
+    print("")
+    print("Before Optimization")
+    print("===================")
+    util.printErrorStatistics(iCal)
+
+    print("")
+    print("Optimizing...")
+    iCal.optimize(maxIterations=parsed.max_iter, recoverCov=parsed.recover_cov)
+
+    print("")
+    print("After Optimization (Results)")
+    print("==================")
+    util.printErrorStatistics(iCal)
+
+    # --- DVL results ---
+    print("")
+    print("DVL calibration results")
+    print("=======================")
+    for dvlNr, d in enumerate(iCal.DvlList):
+        print("DVL{0}:".format(dvlNr))
+        print("  T_dvl_imu (SE3, IMU->DVL):")
+        print(np.array(d.getResultTransformation()))
+        print("  velocity_scale: {0}".format(d.getResultScale()))
+        print("  timeshift_dvl_imu: {0} [s]".format(d.getResultTimeOffset()))
+
+    # --- outputs ---
+    bagtag = os.path.splitext(parsed.bagfile[0])[0]
+
+    dvlFile = bagtag + "-dvl-results.yaml"
+    iCal.saveDvlParametersYaml(dvlFile)
+    print("")
+    print("Results written to:")
+    print("  DVL calibration:      {0}".format(dvlFile))
+
+    dvlTxt = bagtag + "-results-dvl.txt"
+    iCal.saveDvlResultTxt(dvlTxt)
+    print("  DVL detailed results:  {0}".format(dvlTxt))
+
+    yamlFilename = bagtag + "-camchain-imucam.yaml"
+    iCal.saveCamChainParametersYaml(yamlFilename)
+    print("  Camera chain (reused): {0}".format(yamlFilename))
+
+    imuFilename = bagtag + "-imu.yaml"
+    iCal.saveImuSetParametersYaml(imuFilename)
+    print("  IMU (reused):          {0}".format(imuFilename))
+
+    # relatorio (opcional; nao interrompe se falhar headless)
+    try:
+        reportFile = bagtag + "-report-dvl.pdf"
+        util.generateReport(iCal, filename=reportFile, showOnScreen=not parsed.dontShowReport)
+        print("  Report:                {0}".format(reportFile))
+    except Exception as e:
+        sm.logWarn("Could not generate report: {0}".format(e))
+    print("")
+
+
+if __name__ == "__main__":
+    main()

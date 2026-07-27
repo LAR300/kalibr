@@ -1,8 +1,10 @@
 #include <kalibr_errorterms/AccelerometerError.hpp>
 #include <kalibr_errorterms/GyroscopeError.hpp>
+#include <kalibr_errorterms/DvlVelocityError.hpp>
 #include <aslam/backend/test/ErrorTermTestHarness.hpp>
 #include <aslam/backend/RotationQuaternion.hpp>
 #include <aslam/backend/EuclideanPoint.hpp>
+#include <aslam/backend/Scalar.hpp>
 #include <sm/kinematics/quaternion_algebra.hpp>
 
 // GyroscopeError(const Eigen::Vector3d & measurement, const Eigen::Matrix3d & invR, const aslam::backend::EuclideanExpression & angularVelocity, const aslam::backend::EuclideanExpression & bias );
@@ -99,6 +101,23 @@ TEST(ImuCameraTests, testEccentricAccelerometer) {
 
 
 	ErrorTermTestHarness<3> harness(&aerr);
+
+	harness.testAll(1e-5);
+}
+
+TEST(ImuCameraTests, testDvlVelocity) {
+	// DvlVelocityError(measurement, invR, predictedVelocity, scale)
+	// residuo = scale * predictedVelocity - measurement. Checa jacobianas w.r.t. predVel e scale.
+	using namespace aslam::backend;
+	using namespace kalibr_errorterms;
+
+	EuclideanPoint predictedVelocity(Eigen::Vector3d::Random());
+	Scalar scale(1.3);
+
+	DvlVelocityError derr(Eigen::Vector3d::Random(), Eigen::Matrix3d::Identity(),
+			predictedVelocity.toExpression(), scale.toExpression());
+
+	ErrorTermTestHarness<3> harness(&derr);
 
 	harness.testAll(1e-5);
 }

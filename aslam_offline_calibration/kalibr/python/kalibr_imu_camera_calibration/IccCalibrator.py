@@ -6,6 +6,7 @@ import kalibr_common as kc
 import sm
 
 import gc
+import yaml
 import numpy as np
 import multiprocessing
 import sys
@@ -25,6 +26,7 @@ def addSplineDesignVariables(problem, dvc, setActive=True, group_id=HELPER_GROUP
 class IccCalibrator(object):
     def __init__(self):
         self.ImuList = []
+        self.DvlList = []
 
     def initDesignVariables(self, problem, poseSpline, noTimeCalibration, noChainExtrinsics=True, \
                             estimateGravityLength=False, initialGravityEstimate=np.array([0.0,9.81,0.0])):        
@@ -44,8 +46,12 @@ class IccCalibrator(object):
         #Add all DVs for all IMUs
         for imu in self.ImuList:
             imu.addDesignVariables( problem )
-        
-        #Add all DVs for the camera chain    
+
+        #Add all DVs for all DVLs (extrinseco, escala)
+        for dvl in self.DvlList:
+            dvl.addDesignVariables( problem )
+
+        #Add all DVs for the camera chain
         self.CameraChain.addDesignVariables( problem, noTimeCalibration, noChainExtrinsics )
 
     def addPoseMotionTerms(self, problem, tv, rv):
@@ -60,6 +66,9 @@ class IccCalibrator(object):
 
     def registerImu(self, sensor):
         self.ImuList.append( sensor )
+
+    def registerDvl(self, sensor):
+        self.DvlList.append( sensor )
             
     def buildProblem( self, 
                       splineOrder=6, 
@@ -78,6 +87,8 @@ class IccCalibrator(object):
                       gyroNoiseScale=1.0,
                       accelNoiseScale=1.0,
                       timeOffsetPadding=0.02,
+                      recompute_cam_imu=False,
+                      huberDvl=-1,
                       verbose=False  ):
 
         print("\tSpline order: %d" % (splineOrder))
@@ -109,6 +120,12 @@ class IccCalibrator(object):
         self.CameraChain.findOrientationPriorCameraChainToImu(self.ImuList[0])
         estimatedGravity = self.CameraChain.getEstimatedGravity()
 
+        # Mode A (DVL): reuse the PROVIDED camera-IMU calibration (--cams com T_cam_imu) como valor inicial
+        # do extrinseco cam0, sobrescrevendo a re-estimativa do orientation-prior (que so estima rotacao,
+        # deixando a translacao/lever-arm em 0). Depois esse valor e fixado por fixCamImuDesignVariables. (D12)
+        if self.DvlList and not recompute_cam_imu:
+            self.reuseProvidedCamImuExtrinsics()
+
         ############################################
         ## init optimization problem
         ############################################
@@ -139,7 +156,19 @@ class IccCalibrator(object):
             # Add the bias motion terms.
             if doBiasMotionError:
                 imu.addBiasMotionTerms(problem)
-            
+
+        # Initialize DVL error terms (velocity residuals) + temporal offset prior.
+        for dvl in self.DvlList:
+            dvl.findTimeOffsetPrior(self.poseDv)
+            dvl.addVelocityErrorTerms(problem, self.poseDv,
+                                      huber=(huberDvl if huberDvl > 0 else 0.0))
+
+        # Mode A (default) for DVL calibration: hold the reused camera-IMU calibration FIXED, so only
+        # the trajectory spline, IMU biases, gravity and the DVL parameters are optimized. Mode B
+        # (recompute_cam_imu=True) leaves the camera-IMU design variables active (joint optimization).
+        if self.DvlList and not recompute_cam_imu:
+            self.fixCamImuDesignVariables()
+
         # Add the pose motion terms.
         if doPoseMotionError:
             self.addPoseMotionTerms(problem, mrTranslationVariance, mrRotationVariance)
@@ -201,6 +230,74 @@ class IccCalibrator(object):
         self.std_trafo_ic = np.array(est_stds[0:6])
         self.std_times = np.array(est_stds[6:])
     
+    def reuseProvidedCamImuExtrinsics(self):
+        """Modo A: inicializa o extrinseco cam0 com o T_cam_imu fornecido em --cams (D12).
+
+        O fluxo padrao do Kalibr comeca com T_extrinsic=identidade e so estima a rotacao (translacao 0);
+        fixar isso no Modo A daria uma translacao errada. Aqui usamos o T_cam_imu da calibracao cam-IMU
+        submersa ja validada (camchain-imucam.yaml). So cam0 (imu->cam0); baselines cam-cam ja vem do config.
+        """
+        chainConfig = self.CameraChain.chainConfig
+        try:
+            T_cam0_imu = chainConfig.getExtrinsicsImuToCam(0)
+            self.CameraChain.camList[0].T_extrinsic = T_cam0_imu
+            print("Mode A: reusing provided T_cam_imu (cam0) as the fixed camera-IMU extrinsic.")
+        except Exception:
+            sm.logWarn("Mode A: --cams has no T_cam_imu (cam0); using the estimated orientation prior "
+                       "(translation may be 0/inaccurate). Pass a camchain-imucam.yaml from "
+                       "kalibr_calibrate_imu_camera for a correct reuse.")
+
+    def fixCamImuDesignVariables(self):
+        """Modo A: desativa os design variables da calibracao camera-IMU (reusada como fixa).
+
+        Mantem ativos: a spline de pose (trajetoria), os biases da IMU, a gravidade e os DVs do DVL.
+        Desativa: extrinseco imu->cam (T_c_b), timeshift camera-IMU, e extrinsecos imu-imu (q_i_b, r_b).
+        """
+        for cam in self.CameraChain.camList:
+            for i in range(0, cam.T_c_b_Dv.numDesignVariables()):
+                cam.T_c_b_Dv.getDesignVariable(i).setActive(False)
+            cam.cameraTimeToImuTimeDv.setActive(False)
+        for imu in self.ImuList:
+            imu.q_i_b_Dv.setActive(False)
+            imu.r_b_Dv.setActive(False)
+        print("Mode A: camera-IMU calibration held fixed (reused); only trajectory/biases/DVL are free.")
+
+    def saveDvlParametersYaml(self, resultFile):
+        """Escreve o resultado da calibracao do DVL (T_dvl_imu SE3, escala, timeshift) em YAML."""
+        results = {}
+        for dvlNr, dvl in enumerate(self.DvlList):
+            results["dvl{0}".format(dvlNr)] = {
+                "T_dvl_imu": np.array(dvl.getResultTransformation()).tolist(),
+                "velocity_scale": float(dvl.getResultScale()),
+                "timeshift_dvl_imu": float(dvl.getResultTimeOffset()),
+                "sound_speed": dvl.dvlConfig.getSoundSpeed(),
+            }
+        with open(resultFile, "w") as outfile:
+            outfile.write(yaml.dump(results, default_flow_style=None, width=2147483647))
+
+    def saveDvlResultTxt(self, filename):
+        """Resumo textual da calibracao do DVL: extrinseco, escala, offset e estatisticas de residuo."""
+        with open(filename, "w") as f:
+            f.write("Calibration results (DVL)\n")
+            f.write("=========================\n")
+            for dvlNr, dvl in enumerate(self.DvlList):
+                T = np.array(dvl.getResultTransformation())
+                st = dvl.getResidualStats()
+                f.write("\nDVL{0}\n".format(dvlNr))
+                f.write("  Reference frame: IMU (reference)\n")
+                f.write("  T_dvl_imu (SE3, IMU -> DVL):\n")
+                f.write("{0}\n".format(T))
+                f.write("  translation (lever-arm proj.) [m]: {0}\n".format(T[:3, 3]))
+                f.write("  velocity_scale (sound-speed): {0}\n".format(dvl.getResultScale()))
+                f.write("  timeshift_dvl_imu [s]: {0}\n".format(dvl.getResultTimeOffset()))
+                f.write("  --- velocity residuals ---\n")
+                f.write("  RMS [m/s]: {0}\n".format(st["rms"]))
+                f.write("  per-axis RMS [m/s]: {0}\n".format(st["per_axis_rms"]))
+                f.write("  mean / median / max norm [m/s]: {0} / {1} / {2}\n".format(
+                    st["mean_norm"], st["median_norm"], st["max_norm"]))
+                f.write("  measurements used / total (skipped by gating/bounds): {0} / {1} ({2})\n".format(
+                    st["n_used"], st["n_total"], st["n_skipped"]))
+
     def saveImuSetParametersYaml(self, resultFile):
         imuSetConfig = kc.ImuSetParameters(resultFile, True)
         for imu in self.ImuList:

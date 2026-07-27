@@ -30,6 +30,7 @@ add_library(${PROJECT_NAME}_errorterms
   src/EuclideanError.cpp
   src/GyroscopeError.cpp
   src/AccelerometerError.cpp
+  src/DvlVelocityError.cpp
 )
 target_link_libraries(${PROJECT_NAME}_errorterms ${catkin_LIBRARIES})
 
@@ -76,6 +77,7 @@ catkin_install_python(
     python/kalibr_calibrate_cameras
     python/kalibr_visualize_distortion
     python/kalibr_calibrate_imu_camera
+    python/kalibr_calibrate_dvl
     python/kalibr_create_target_pdf
     python/kalibr_calibrate_rs_cameras
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

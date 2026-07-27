@@ -9,6 +9,7 @@ import kalibr_common as kc
 import kalibr_errorterms as ket
 from . import IccCalibrator as ic
 from .IccCalibrator import *
+from . import DvlError as dvlerr
 
 import cv2
 import sys
@@ -1169,4 +1170,201 @@ class IccScaledMisalignedSizeEffectImu(IccScaledMisalignedImu):
             iProgress.sample()
 
         print("\r  Added {0} of {1} accelerometer error terms (skipped {2} out-of-bounds measurements)".format( len(self.imuData)-num_skipped, len(self.imuData), num_skipped ))
+
+
+###############################################################################
+# DVL (Doppler Velocity Log) sensor
+###############################################################################
+# Parametrizacao interna do extrinseco: rotacao C_dvl_b (frame IMU de referencia -> frame DVL) e
+# r_b (lever-arm = posicao da origem do DVL no frame da IMU). O YAML/config expressa isso como uma
+# transformacao SE3 padrao T_dvl_imu (IMU -> DVL): p_dvl = C_dvl_b * p_imu + t, com t = -C_dvl_b * r_b.
+def dvlExtrinsicToParams(T_dvl_imu):
+    """SE3 T_dvl_imu (IMU->DVL) -> (quaternion de C_dvl_b [xyzw], r_b lever-arm no frame IMU)."""
+    T = np.array(T_dvl_imu, dtype=float)
+    C_dvl_b = T[:3, :3]
+    t = T[:3, 3]
+    r_b = -np.dot(C_dvl_b.T, t)
+    return sm.r2quat(C_dvl_b), r_b
+
+
+def dvlParamsToExtrinsic(C_dvl_b, r_b):
+    """(C_dvl_b, r_b) -> SE3 T_dvl_imu (IMU->DVL): t = -C_dvl_b * r_b."""
+    T = np.eye(4)
+    T[:3, :3] = C_dvl_b
+    T[:3, 3] = -np.dot(C_dvl_b, np.asarray(r_b).flatten())
+    return T
+
+
+class IccDvl(object):
+    """Sensor DVL para a calibracao offline (kalibr_calibrate_dvl).
+
+    Estima o extrinseco DVL<->IMU de referencia (T_dvl_imu), a escala de velocidade e (via prior de
+    correlacao) o offset temporal, adicionando residuos de velocidade contra a B-spline de pose.
+    Ver .ai/specs/dvl-calibration/decisions.md (D2/D4/D6/D7/D8).
+    """
+
+    def __init__(self, dvlConfig, parsed=None, csvfile=None, dvlNr=0):
+        self.dvlConfig = dvlConfig
+        self.dvlNr = dvlNr
+        self.timeOffset = 0.0
+
+        # extrinseco inicial (config SE3 -> parametros internos C_dvl_b, r_b)
+        T_init = dvlConfig.getExtrinsic()
+        self.q_dvl_b_prior, self.r_b_prior = dvlExtrinsicToParams(T_init)
+
+        self.scale_prior = float(dvlConfig.getVelocityScale())
+        self.estimateScale = dvlConfig.getEstimateScale()
+        self.estimateTimedelay = dvlConfig.getEstimateTimeOffset()
+        self.fallbackSigma = dvlConfig.getVelocityNoiseDensity()
+
+        # carregar dataset do DVL (CSV; gating aplicado no leitor)
+        csv = csvfile if csvfile is not None else dvlConfig.getCsvPath()
+        if csv is None:
+            raise RuntimeError("IccDvl: nenhuma fonte de dados do DVL (csv) definida no config.")
+        self.dataset = kc.CsvDvlDatasetReader(csv, gating=dvlConfig.getGating())
+        self.dvlData = list(self.dataset)
+
+        print("Reading DVL data ({0})".format(csv))
+        print("  Read {0} DVL readings ({1} valid after gating)".format(
+            self.dataset.numMessages(), self.dataset.numValid()))
+
+    def addDesignVariables(self, problem, group_id=CALIBRATION_GROUP_ID):
+        self.q_dvl_b_Dv = aopt.RotationQuaternionDv(self.q_dvl_b_prior)
+        self.q_dvl_b_Dv.setActive(True)
+        problem.addDesignVariable(self.q_dvl_b_Dv, group_id)
+
+        self.r_dvl_b_Dv = aopt.EuclideanPointDv(self.r_b_prior)
+        self.r_dvl_b_Dv.setActive(True)
+        problem.addDesignVariable(self.r_dvl_b_Dv, group_id)
+
+        self.scaleDv = aopt.Scalar(self.scale_prior)
+        self.scaleDv.setActive(self.estimateScale)
+        problem.addDesignVariable(self.scaleDv, group_id)
+
+    def addVelocityErrorTerms(self, problem, poseSplineDv, huber=0.0):
+        """Adiciona os residuos de velocidade do DVL contra a B-spline de pose.
+
+        Delega a DvlError.addDvlVelocityErrorTerms (geometria em Python + escala via C++), avaliando
+        em tk = stamp + timeOffset, com bounds/gating/whitening. Espelha IccImu.addAccelerometerErrorTerms.
+        """
+        print("")
+        print("Adding DVL velocity error terms")
+        errors, n_added, n_skipped = dvlerr.addDvlVelocityErrorTerms(
+            problem, poseSplineDv, self.dvlData,
+            self.q_dvl_b_Dv, self.r_dvl_b_Dv, self.scaleDv,
+            time_offset=self.timeOffset, huber=huber, fallback_sigma=self.fallbackSigma)
+        self.dvlErrors = errors
+        print("  Added {0} of {1} DVL velocity error terms (skipped {2} invalid/out-of-bounds)".format(
+            n_added, len(self.dvlData), n_skipped))
+        return errors
+
+    def findTimeOffsetPrior(self, poseSplineDv, refine=True):
+        """Estima o offset temporal DVL<->IMU por correlacao cruzada (D8).
+
+        Compara a magnitude da velocidade medida pelo DVL, |v_dvl|, com a magnitude da velocidade
+        linear da spline em (t + dt), e escolhe dt. Define self.timeOffset (usado como tk = stamp +
+        timeOffset). Se estimateTimedelay=False, e no-op (offset 0). Espelha IccImu.findOrientationPrior.
+        """
+        if not self.estimateTimedelay:
+            self.timeOffset = 0.0
+            print("DVL time offset estimation disabled; using 0.0 s")
+            return 0.0
+
+        print("")
+        print("Estimating DVL time offset prior (cross-correlation).")
+        spline = poseSplineDv.spline()
+        valid = [m for m in self.dvlData if m["velocity_valid"]]
+        if len(valid) < 3:
+            self.timeOffset = 0.0
+            print("  Not enough valid DVL samples; using 0.0 s")
+            return 0.0
+
+        times = np.array([m["timestamp"] for m in valid])
+        dvl_speed = np.array([np.linalg.norm(m["velocity"]) for m in valid])
+
+        def masked(dt):
+            idx = [i for i, t in enumerate(times) if spline.t_min() < t + dt < spline.t_max()]
+            sp = np.array([np.linalg.norm(spline.linearVelocity(times[i] + dt)) for i in idx])
+            return sp, dvl_speed[idx]
+
+        # correlacao cruzada -> shift discreto inicial
+        sp0, dv0 = masked(0.0)
+        corr = np.correlate(sp0 - sp0.mean(), dv0 - dv0.mean(), "full")
+        discrete_shift = corr.argmax() - (len(dv0) - 1)
+        dt_mean = float(np.mean(np.diff(times)))
+        shift = discrete_shift * dt_mean
+
+        def normalize(x):
+            x = np.asarray(x, dtype=float)
+            s = x.std()
+            return (x - x.mean()) / (s if s > 1e-12 else 1.0)
+
+        def objective(dt):
+            sp, dv = masked(dt[0] if hasattr(dt, "__len__") else dt)
+            n = min(len(sp), len(dv))
+            if n < 3:
+                return 1e9
+            return float(np.sum((normalize(sp[:n]) - normalize(dv[:n])) ** 2))
+
+        # robustez de sinal: parte do melhor entre {0, shift, -shift}
+        start = min([0.0, shift, -shift], key=lambda d: objective([d]))
+        self.timeOffset = float(start)
+
+        if refine:
+            refined = scipy.optimize.fmin(objective, np.array([start]),
+                                          disp=False, xtol=1e-4, ftol=1e-4)
+            self.timeOffset = float(refined[0])
+
+        print("  DVL temporal offset prior (w.r.t. reference IMU): {0} s".format(self.timeOffset))
+        return self.timeOffset
+
+    def getResultTransformation(self):
+        """T_dvl_imu (SE3, IMU->DVL) estimado."""
+        C = self.q_dvl_b_Dv.toRotationMatrix()
+        r_b = np.asarray(self.r_dvl_b_Dv.toEuclidean()).flatten()
+        return dvlParamsToExtrinsic(C, r_b)
+
+    def getResultScale(self):
+        return float(self.scaleDv.toScalar())
+
+    def getResultTimeOffset(self):
+        return float(self.timeOffset)
+
+    def getVelocityResiduals(self):
+        """Residuos de velocidade (predito - medido) por error term, apos otimizacao. Array (N,3)."""
+        res = []
+        for err in getattr(self, "dvlErrors", []):
+            res.append(np.asarray(err.getPredictedMeasurement()).flatten()
+                       - np.asarray(err.getMeasurement()).flatten())
+        return np.array(res) if res else np.zeros((0, 3))
+
+    def getResidualStats(self):
+        """Estatisticas dos residuos de velocidade do DVL (RMS, por-eixo, contagens)."""
+        res = self.getVelocityResiduals()
+        n_used = len(res)
+        n_total = len(self.dvlData)
+        if n_used == 0:
+            nan = float("nan")
+            return {"n_used": 0, "n_total": n_total, "n_skipped": n_total,
+                    "rms": nan, "mean_norm": nan, "median_norm": nan, "max_norm": nan,
+                    "per_axis_rms": [nan, nan, nan]}
+        norms = np.linalg.norm(res, axis=1)
+        return {
+            "n_used": n_used,
+            "n_total": n_total,
+            "n_skipped": n_total - n_used,
+            "rms": float(np.sqrt(np.mean(norms ** 2))),
+            "mean_norm": float(np.mean(norms)),
+            "median_norm": float(np.median(norms)),
+            "max_norm": float(np.max(norms)),
+            "per_axis_rms": np.sqrt(np.mean(res ** 2, axis=0)).tolist(),
+        }
+
+    def updateDvlConfig(self):
+        self.dvlConfig.setExtrinsic(self.getResultTransformation())
+        self.dvlConfig.setVelocityScale(self.getResultScale())
+
+    def getDvlConfig(self):
+        self.updateDvlConfig()
+        return self.dvlConfig
         self.accelErrors = accelErrors

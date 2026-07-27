@@ -766,3 +766,123 @@ class CameraChainParameters(ParametersBase):
             except:
                 print("  baseline: no data available", file=dest)
                 pass
+
+
+class DvlParameters(ParametersBase):
+    """Configuracao do DVL para o kalibr_calibrate_dvl (ver scripts/config/dvl0.yaml).
+
+    YAML padrao (PyYAML). O extrinseco T_dvl_imu e em relacao a IMU de referencia.
+    """
+    def __init__(self, yamlFile, createYaml=False):
+        ParametersBase.__init__(self, yamlFile, "DvlConfig", createYaml)
+
+    ###################################################
+    # Fonte dos dados (CSV padrao; rostopic opcional)
+    ###################################################
+    def getCsvPath(self):
+        return self.data.get("csv", None)
+
+    def setCsvPath(self, path):
+        self.data["csv"] = path
+
+    def checkRosTopic(self, topic):
+        if not isinstance(topic, str):
+            self.raiseError("rostopic has to be a string")
+
+    def getRosTopic(self):
+        topic = self.data.get("rostopic", None)
+        if topic is not None:
+            self.checkRosTopic(topic)
+        return topic
+
+    def setRosTopic(self, topic):
+        self.checkRosTopic(topic)
+        self.data["rostopic"] = topic
+
+    ###################################################
+    # Taxa, sound-speed, escala, offset temporal
+    ###################################################
+    @catch_keyerror
+    def getUpdateRate(self):
+        return self.data["update_rate"]
+
+    def setUpdateRate(self, update_rate):
+        self.data["update_rate"] = update_rate
+
+    @catch_keyerror
+    def getSoundSpeed(self):
+        return self.data["sound_speed"]
+
+    def setSoundSpeed(self, sound_speed):
+        self.data["sound_speed"] = sound_speed
+
+    def getVelocityScale(self):
+        return self.data.get("velocity_scale", 1.0)
+
+    def setVelocityScale(self, scale):
+        self.data["velocity_scale"] = scale
+
+    def getEstimateScale(self):
+        return bool(self.data.get("estimate_scale", True))
+
+    def setEstimateScale(self, flag):
+        self.data["estimate_scale"] = bool(flag)
+
+    def getEstimateTimeOffset(self):
+        return bool(self.data.get("estimate_time_offset", True))
+
+    def setEstimateTimeOffset(self, flag):
+        self.data["estimate_time_offset"] = bool(flag)
+
+    ###################################################
+    # Extrinseco inicial T_dvl_imu (4x4)
+    ###################################################
+    def checkExtrinsic(self, T):
+        if np.array(T).shape != (4, 4):
+            self.raiseError("T_dvl_imu must be a 4x4 matrix")
+
+    @catch_keyerror
+    def getExtrinsic(self):
+        T = np.array(self.data["T_dvl_imu"], dtype=float)
+        self.checkExtrinsic(T)
+        return T
+
+    def setExtrinsic(self, T):
+        T = np.array(T, dtype=float)
+        self.checkExtrinsic(T)
+        self.data["T_dvl_imu"] = T.tolist()
+
+    ###################################################
+    # Ruido fallback e gating
+    ###################################################
+    def getVelocityNoiseDensity(self):
+        return self.data.get("velocity_noise_density", 0.02)
+
+    def setVelocityNoiseDensity(self, sigma):
+        self.data["velocity_noise_density"] = sigma
+
+    def getGating(self):
+        default = {"require_velocity_valid": True, "min_altitude": 0.0,
+                   "max_altitude": 1e9, "max_fom": 1e9, "max_speed": 1e9}
+        gating = dict(default)
+        gating.update(self.data.get("gating", {}) or {})
+        return gating
+
+    def setGating(self, gating):
+        self.data["gating"] = dict(gating)
+
+    ###################################################
+    # Helpers
+    ###################################################
+    def printDetails(self, dest=sys.stdout):
+        print("  Source: {0}".format(self.getCsvPath() or self.getRosTopic()), file=dest)
+        print("  Update rate: {0}".format(self.data.get("update_rate")), file=dest)
+        print("  Sound speed: {0} m/s".format(self.data.get("sound_speed")), file=dest)
+        print("  Estimate scale: {0} (init {1})".format(self.getEstimateScale(),
+                                                        self.getVelocityScale()), file=dest)
+        print("  Estimate time offset: {0}".format(self.getEstimateTimeOffset()), file=dest)
+        print("  Velocity noise density (fallback): {0} m/s".format(
+            self.getVelocityNoiseDensity()), file=dest)
+        print("  Gating: {0}".format(self.getGating()), file=dest)
+        print("  T_dvl_imu:", file=dest)
+        print(self.getExtrinsic(), file=dest)

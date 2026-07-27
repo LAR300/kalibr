@@ -2,9 +2,11 @@
 // if you are using the numpy_eigen interface
 #include <numpy_eigen/boost_python_headers.hpp>
 #include <aslam/backend/ErrorTerm.hpp>
+#include <aslam/backend/ScalarExpression.hpp>
 #include <kalibr_errorterms/EuclideanError.hpp>
 #include <kalibr_errorterms/GyroscopeError.hpp>
 #include <kalibr_errorterms/AccelerometerError.hpp>
+#include <kalibr_errorterms/DvlVelocityError.hpp>
 
 // The title of this library must match exactly
 BOOST_PYTHON_MODULE(libkalibr_errorterms_python)
@@ -35,6 +37,11 @@ BOOST_PYTHON_MODULE(libkalibr_errorterms_python)
 	("GyroscopeNoBiasError", init<const Eigen::Vector3d & , const Eigen::Matrix3d & ,
 			const aslam::backend::EuclideanExpression & >
 	("GyroscopeError(measurement, invR, angularVelocity)"));
+
+	class_<DvlVelocityError, boost::shared_ptr<DvlVelocityError>, bases< EuclideanError > >
+	("DvlVelocityError", init<const Eigen::Vector3d & , const Eigen::Matrix3d & ,
+			const aslam::backend::EuclideanExpression & , const aslam::backend::ScalarExpression & >
+	("DvlVelocityError(measurement, invR, predictedVelocity, scale)"));
 
 	class_<AccelerometerErrorEccentric, boost::shared_ptr<AccelerometerErrorEccentric>,
 	bases<EuclideanError> >

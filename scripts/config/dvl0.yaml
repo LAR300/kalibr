@@ -1,0 +1,39 @@
+# Configuracao do DVL (Water Linked A50) para o kalibr_calibrate_dvl.
+# Formato: YAML padrao (PyYAML), como os demais configs do Kalibr (nao e OpenCV FileStorage).
+#
+# O extrinseco e estimado em relacao a IMU de REFERENCIA (a 1a passada em --imu; no seu setup, a
+# Microstrain). Ver .ai/specs/dvl-calibration/decisions.md (D2).
+
+# --- Fonte dos dados do DVL ---
+# Via padrao: CSV extraido do bag ROS 2 (ver schema em scripts/config/dvl0_example.csv).
+csv: /data/calibration/cam_imu_dvl/SESSAO/dvl0.csv
+# Alternativa (se dvl_msgs for regenerado em ROS 1): ler direto de um topico.
+# rostopic: /dvl/data
+update_rate: 8            # Hz nominal do A50 (informativo)
+
+# --- Modelo de medicao ---
+sound_speed: 1500.0       # m/s configurado no A50 durante a captura (referencia p/ a escala)
+velocity_scale: 1.0       # chute inicial da escala s (adimensional)
+estimate_scale: true      # estimar a escala de velocidade (sound-speed)?
+estimate_time_offset: true  # estimar o offset temporal DVL<->IMU?
+
+# --- Extrinseco inicial DVL -> IMU de referencia (chute inicial vindo do xacro) ---
+# Matriz 4x4 homogenea (rotacao + translacao/lever-arm em metros).
+T_dvl_imu:
+  - [1.0, 0.0, 0.0, 0.0]
+  - [0.0, 1.0, 0.0, 0.0]
+  - [0.0, 0.0, 1.0, 0.0]
+  - [0.0, 0.0, 0.0, 1.0]
+
+# --- Ruido / ponderacao ---
+# A covariancia por amostra vem do CSV (campos cov*). Este sigma e o FALLBACK usado quando a
+# covariancia do CSV for invalida/ausente (usado como cov = sigma^2 * I).
+velocity_noise_density: 0.02   # m/s, sigma por eixo (fallback)
+
+# --- Gating: descartar amostras ruins (sem bottom-lock / outliers) ---
+gating:
+  require_velocity_valid: true   # descartar se velocity_valid = 0
+  min_altitude: 0.1              # m (abaixo disso: sem bottom-lock confiavel)
+  max_altitude: 50.0             # m (acima do alcance util do A50)
+  max_fom: 1.0                   # figure-of-merit maximo aceito (m/s)
+  max_speed: 1.5                 # m/s: descarta outliers de velocidade
