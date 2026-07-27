@@ -1,0 +1,16 @@
+{
+  "baseline": "9a50b3f5ae00e4ff9278dfe91c665b80270b88f4",
+  "docs": [
+    "overview.md",
+    "architecture.md",
+    "stack.md",
+    "conventions.md",
+    "glossary.md",
+    "api.md",
+    "data-model.md",
+    "testing.md",
+    "domain/README.md",
+    "domain/cam-imu-calibration.md",
+    "domain/dvl-calibration.md"
+  ]
+}
