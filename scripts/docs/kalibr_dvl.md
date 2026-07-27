@@ -51,7 +51,20 @@ para estimar os parâmetros do DVL. Detalhes: `.ai/specs/dvl-calibration/decisio
 
 ## Coleta de dados no tanque
 
-Grave **um bag combinado** (ROS 2) com **estéreo retificado + IMU (Microstrain) + DVL**, submerso:
+Grave **um bag combinado** (ROS 2) com **estéreo retificado + IMU (Microstrain) + DVL**, submerso.
+
+**Tópicos a gravar no bag do DVL** (nomes de exemplo — ajuste ao seu setup; os da câmera/IMU devem
+casar com os `rostopic` do `camchain-imucam.yaml` e do `imu.yaml`):
+
+| Tópico | Tipo | Papel |
+|---|---|---|
+| `/zed/left/image_rect`, `/zed/right/image_rect` | `sensor_msgs/Image` | estéreo retificado (reconstrói a spline) |
+| `/imu/data` (Microstrain, referência) | `sensor_msgs/Imu` | IMU de referência |
+| `/dvl/data` | `dvl_msgs/DVL` | velocidade do DVL (extraída para CSV no preparo) |
+
+> Tabela completa por etapa (todos os 4 bags) em `README.md` → "Tópicos do rosbag".
+
+Ao gravar, garanta:
 
 - **Alvo visível E bottom-lock ao mesmo tempo:** o cilindro precisa apontar a câmera ao AprilGrid
   submerso e o DVL a uma superfície refletora (fundo do tanque), com `altitude` dentro do alcance do

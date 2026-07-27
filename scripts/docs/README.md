@@ -35,6 +35,29 @@ Para a primeira vez (do zero), recomenda-se **4 bags** — isola cada variável:
 > Depois de confortável, os bags 3 e 4 podem virar um só (rodar etapa 3 e depois 4 no mesmo bag; ou
 > Modo B para co-otimizar tudo). Ver `kalibr_dvl.md`.
 
+## Tópicos do rosbag (o que gravar em cada bag)
+
+O Kalibr lê os tópicos definidos no campo `rostopic` de cada YAML — o bag **precisa conter exatamente
+esses tópicos**. Os nomes abaixo são **exemplos**; ajuste para os do seu setup e mantenha o YAML coerente
+(se divergir, o Kalibr dá `Could not find topic X in bag`).
+
+| Bag / etapa | Tópicos a gravar | Tipo de mensagem | Taxa típica |
+|---|---|---|---|
+| **1 — Intrínsecos** | câmera esq.+dir. **raw** (`/zed/left/image_raw`, `/zed/right/image_raw`) | `sensor_msgs/Image` | ~fps (20 Hz) |
+| **2 — Ruído IMU** | IMU Microstrain + IMU ZED (`/imu/data`, `/zed/imu/data`) | `sensor_msgs/Imu` | ~200 Hz |
+| **3 — Câmera-IMU** | estéreo **retificado** + as 2 IMUs (`/zed/left/image_rect`, `/zed/right/image_rect`, `/imu/data`, `/zed/imu/data`) | `Image`, `Imu` | img ~20 Hz, IMU ~200 Hz |
+| **4 — DVL** | estéreo **retificado** + IMU de referência (Microstrain) + **DVL** (`/zed/left/image_rect`, `/zed/right/image_rect`, `/imu/data`, `/dvl/data`) | `Image`, `Imu`, **`dvl_msgs/DVL`** | DVL ~8 Hz |
+
+**Notas:**
+- **Nome exato vem do YAML:** câmera → `rostopic` no `camchain.yaml` (por câmera); IMU → `rostopic` no
+  `imu.yaml` (a 1ª IMU em `--imu` é a referência = Microstrain).
+- **Raw vs retificado:** etapa 1 grava **raw**; etapas 3 e 4 usam imagens **retificadas** (camchain com
+  `distortion_coeffs: [0,0,0,0]`). Grave os dois, ou retifique offline.
+- **DVL:** `/dvl/data` (`dvl_msgs/DVL`) é gravado no bag ROS 2, mas a ferramenta o consome via **CSV**
+  extraído (não lê do bag ROS 1) — por isso não é um `rostopic` do lado Kalibr. Ver `kalibr_dvl.md`.
+- **Sincronização:** grave tudo no mesmo bag com timestamps confiáveis (o offset é calibrado, mas
+  relógios muito dessincronizados pioram o resultado).
+
 ## Passo a passo (com os guias detalhados)
 
 ### Etapa 1 — Intrínsecos + estéreo  ·  guia: `kalibr.md`
