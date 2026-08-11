@@ -56,12 +56,20 @@ Grave **um bag combinado** (ROS 2) com **estéreo retificado + IMU (Microstrain)
 **Tópicos a gravar no bag do DVL** (nomes de exemplo — ajuste ao seu setup; os da câmera/IMU devem
 casar com os `rostopic` do `camchain-imucam.yaml` e do `imu.yaml`):
 
+Tópicos reais do bag do tanque (dataset `piscina_calib`):
+
 | Tópico | Tipo | Papel |
 |---|---|---|
-| `/zed/left/image_rect`, `/zed/right/image_rect` | `sensor_msgs/Image` | estéreo retificado (reconstrói a spline) |
-| `/imu/data` (Microstrain, referência) | `sensor_msgs/Imu` | IMU de referência |
-| `/dvl/data` | `dvl_msgs/DVL` | velocidade do DVL (extraída para CSV no preparo) |
+| `/zed/zed_node/left/color/raw/image`, `/zed/zed_node/right/color/raw/image` | `sensor_msgs/Image` | estéreo (color, **raw**) — reconstrói a spline |
+| `/imu/data` (~197 Hz) | `sensor_msgs/Imu` | **Microstrain** (referência) |
+| `/zed/zed_node/imu/data` (~98 Hz) | `sensor_msgs/Imu` | IMU da ZED (opcional no bag do DVL) |
+| `/dvl/data` (~9 Hz) | `dvl_msgs/DVL` | velocidade do DVL (extraída para CSV no preparo) |
+| `/lar/bar/depth` | `petro_interfaces/...` | pressão/profundidade (não usado pela calibração) |
 
+> **Raw vs retificado:** o bag traz imagens **raw** — o `camchain-imucam.yaml` passado em `--cams` precisa
+> corresponder (intrínsecos + distorção das imagens raw), ou retifique as imagens antes. Não misture
+> camchain de imagem retificada com imagens raw.
+>
 > Tabela completa por etapa (todos os 4 bags) em `README.md` → "Tópicos do rosbag".
 
 Ao gravar, garanta:
@@ -83,16 +91,25 @@ Ao gravar, garanta:
 Os bags são gravados em **ROS 2**; o Kalibr é **ROS 1**:
 
 ```bash
-# 1) Converter o bag ROS 2 -> ROS 1 (tópicos de imagem e IMU)
-rosbags-convert meu_bag_ros2/  --dst  cam_imu_dvl.bag
+# (pré) instalar a lib rosbags no host (uma vez): pip install rosbags
 
-# 2) Extrair o stream do DVL (dvl_msgs/DVL) para CSV (schema em scripts/config/dvl0_example.csv)
-#    -> dvl0.csv com 16 colunas: timestamp_ns, vx,vy,vz, cov00..cov22, velocity_valid, fom, altitude
-#    (script extrator de referência: ver plano, tarefa 3.4 — roda no lado ROS 2)
+# 0) Ver os tópicos do bag (útil para preencher os yamls)
+python3 scripts/ros2_dvl_to_csv.py <bag.zip|bag_dir|bag.mcap> --list-topics
+
+# 1) Extrair o stream do DVL (dvl_msgs/DVL) para CSV (schema em scripts/config/dvl0_example.csv)
+#    Aceita o .zip direto (descompacta), um diretório rosbag2, ou um .mcap com metadata.yaml ao lado.
+python3 scripts/ros2_dvl_to_csv.py \
+  data/calibration/cam_imu_dvl/<SESSAO> \
+  --dvl-topic /dvl/data \
+  -o data/calibration/cam_imu_dvl/dvl0.csv
+
+# 2) Converter o bag ROS 2 -> ROS 1 (imagens + IMU), para o Kalibr
+rosbags-convert --src <bag_ros2> --dst cam_imu_dvl.bag
 ```
 
 > **Por que CSV?** `dvl_msgs/DVL` é mensagem custom; extrair para CSV evita ter de regerar a mensagem
-> em ROS 1. Alternativa: regerar `dvl_msgs` em ROS 1 e usar `rostopic` no `dvl0.yaml`.
+> em ROS 1. O `ros2_dvl_to_csv.py` roda no **host** (sem ROS 2 instalado) via a lib `rosbags`, registrando
+> os tipos `dvl_msgs/DVL`/`DVLBeam`. Alternativa: regerar `dvl_msgs` em ROS 1 e usar `rostopic` no `dvl0.yaml`.
 
 ---
 

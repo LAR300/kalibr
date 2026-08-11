@@ -90,11 +90,12 @@
   - **Verificação:** teste sobre um CSV sintético (da tarefa 2.1 exportado): nº de amostras e valores conferem;
     amostras inválidas são filtradas. ✓ `kalibr_common/DvlDatasetReader.py` + `write_csv` no gerador +
     `test/dvl/test_dvl_csv_reader.py`: 100 lidas, 96 válidas (4 gated), round-trip OK, integra com o termo (n_added=96).
-- [~] **3.4** (Opcional — ADIADA por decisão do usuário) Reference extractor ROS 2: script que converte
-  `dvl_msgs/DVL` de um bag ROS 2 no CSV do schema 3.1 (roda no lado do usuário; não faz parte do build ROS 1).
+- [x] **3.4** Reference extractor ROS 2: script que converte `dvl_msgs/DVL` de um bag ROS 2 no CSV do
+  schema 3.1 (roda no lado do usuário; não faz parte do build ROS 1).
   - **Verificação:** documentado; executa sobre um bag de amostra e produz um CSV válido.
-  - **Status:** adiada — será feita quando for coletar dados reais (independe do núcleo). O formato-alvo é o
-    schema documentado em `scripts/config/dvl0_example.csv`.
+    ✓ `scripts/ros2_dvl_to_csv.py` (lib `rosbags`, lê MCAP/sqlite3 e `.zip` sem ROS 2; registra os tipos
+    custom `dvl_msgs/DVL`/`DVLBeam`; `--list-topics`). Testado no bag real do tanque (`piscina_calib_01`):
+    2116 amostras extraídas em ~6s, CSV 16-col válido (2061 válidas, covariância/fom reais).
 
 ## Fase 4 — Sensor `IccDvl` e integração no calibrador (R1–R5, R11, D6)
 
