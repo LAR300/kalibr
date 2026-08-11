@@ -55,5 +55,6 @@ Build
 # vs-code
 .vscode
 
-# data
-./scripts/data/*
+# data (bags, CSVs extraídos, resultados de calibração — nunca versionar)
+# NB: o './' inicial nao funciona em .gitignore; usar caminho relativo com barra final.
+/scripts/data/
