@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<!-- petro_description/urdf/petro.urdf.xacro -->
+<robot name="petro_rov" xmlns:xacro="http://ros.org/wiki/xacro">
+  <!-- Corpo do ROV -->
+  <link name="base_link"/>
+
+  <!-- ZED 2i montada no cilindro — posição real -->
+  <joint name="base_to_zed" type="fixed">
+    <parent link="base_link"/>
+    <child link="zed_node_camera_link"/>
+    <origin xyz="0.133 0.0 -0.015" rpy="0 0 0"/>  <!-- posição e inclinação reais -->
+  </joint>
+
+  <!-- Inclui URDF da ZED (frames internas) -->
+  <xacro:include filename="$(find zed_wrapper)/urdf/zed_macro.urdf.xacro"/>
+  <xacro:zed_camera name="zed_node" model="zed2i">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:zed_camera>
+
+  <!-- IMU interna da ZED 2i (posição aproximada relativa à câmera esquerda).
+       O zed_wrapper publica este frame dinamicamente via SDK em modo live,
+       mas em modo rosbag/test o RSP precisa publicá-lo via URDF. -->
+  <link name="zed_node_imu_link"/>
+  <joint name="zed_node_left_to_imu" type="fixed">
+    <parent link="zed_node_left_camera_frame"/>
+    <child link="zed_node_imu_link"/>
+    <origin xyz="-0.002 -0.023 -0.002" rpy="0 0 0"/>
+  </joint>
+
+  <!-- DVL -->
+  <joint name="base_to_dvl" type="fixed">
+    <parent link="base_link"/>
+    <child link="dvl_link"/>
+    <origin xyz="0.0 0.0 -0.13992" rpy="0 0 0"/>
+  </joint>
+  <link name="dvl_link"/>
+
+  <!-- IMU externo. Nova fixação (montada referenciada à ZED); posição e
+       orientação (180° em Z) atualizadas manualmente para a nova estrutura. -->
+  <joint name="base_to_imu" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="-0.09439 0.0 -0.01112" rpy="0 0 0"/>
+  </joint>
+  <link name="imu_link"/>
+
+  <!-- Barômetro (sensor de pressão / profundidade) -->
+  <joint name="base_to_baro" type="fixed">
+    <parent link="base_link"/>
+    <child link="baro_link"/>
+    <origin xyz="-0.164 0.0 -0.035" rpy="0 0 0"/>  <!-- ajustar posição real -->
+  </joint>
+  <link name="baro_link"/>
+</robot>

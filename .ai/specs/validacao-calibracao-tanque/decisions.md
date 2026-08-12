@@ -42,6 +42,29 @@
 - **Por quê:** aproveita as duas IMUs (dá `T_zed_micro`), mas não bloqueia se a ZED atrapalhar.
 - **Consequências:** o extrínseco do DVL é sempre relativo à Microstrain (referência), independente disso.
 
+### D8 — Rebasear timestamps (Unix epoch → ~0) na conversão ROS 2→ROS 1 e no CSV do DVL
+
+- **Contexto:** o `kalibr_calibrate_imu_camera` falhou com "Spline Coefficient Buffer Exceeded"
+  (`[1.78535e9 <= 1.78535e9 < 1.78535e9]`). Causa: timestamps Unix (~1.785e9 s); a B-spline usa float32
+  no buffer de tempo, e nessa magnitude o float32 tem ~212 s de resolução — os tempos colapsam.
+- **Decisão:** subtrair um `t0` comum (≈ início do bag) de **todos** os timestamps ao gerar o bag ROS 1
+  **e** ao extrair o CSV do DVL, mantendo o timing relativo e o alinhamento entre eles. Scripts
+  `ros2_to_ros1_kalibr.py` (`--zero-start`, imprime `T0_NS`) e `ros2_dvl_to_csv.py` (`--t0-ns`).
+- **Por quê:** fix padrão da comunidade para bags rosbag2 no Kalibr; barato (re-converter ~1 min).
+- **Consequências:** o `t0` usado no bag e no CSV do DVL **deve ser o mesmo**. O timeshift/offset
+  estimados ficam em relação ao tempo rebaseado (irrelevante — são relativos).
+
+### D7 — Reusar intrínsecos da ZED como radtan 4-params (dropar k3); testar Kalibr depois
+
+- **Contexto:** a calibração da ZED (`zed_opencv_calibration.yaml`) é radtan de **5 params**
+  (`k1,k2,p1,p2,k3`) com k3 grande (−2.64 esq / −4.12 dir); o modelo `radtan` do Kalibr é de **4 params**.
+- **Decisão:** por escolha do usuário (pressa), montar o `camchain.yaml` com `fx,fy,cx,cy` + `[k1,k2,p1,p2]`
+  da ZED, **descartando o k3**. Baseline/`T_cn_cnm1` do campo `T` (mm→m).
+- **Por quê:** destrava a validação já; evita recalibrar intrínsecos agora.
+- **Consequências / a testar depois:** o k3 grande pode **elevar o erro de reprojeção** e enviesar o
+  cam-IMU. **TODO (futuro):** calibrar os intrínsecos com o Kalibr no bag (pinhole-radtan e/ou pinhole-equi)
+  e comparar reprojeção vs. a ZED-4params. Registrar na consolidação.
+
 ### D6 — Consolidação: reportar os 4, escolher por resíduo/consistência
 
 - **Decisão:** apresentar os resultados dos 4 bags (média ± desvio) e escolher a calibração final como o

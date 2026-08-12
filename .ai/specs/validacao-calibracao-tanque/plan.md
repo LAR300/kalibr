@@ -29,19 +29,30 @@
 
 ## Fase 2 — Configs de entrada (Kalibr)
 
-- [ ] **2.1 Montar `camchain.yaml`** (2 câmeras, tópicos raw, intrínsecos + distorção + `T_cn_cnm1`) — D2.
+- [x] **2.1 Montar `camchain.yaml`** (2 câmeras, tópicos raw, intrínsecos + distorção + `T_cn_cnm1`) — D2.
   - **Verificação:** parse OK; `rostopic` batem com os tópicos do bag ROS 1; resolução confere.
-- [ ] **2.2 Montar `imu.yaml`** (Microstrain #1 + ZED) com ruído de datasheet (D3); `rostopic`/`update_rate` corretos.
+    ✓ `config01/camchain.yaml` (radtan 4-params, k3 dropado; baseline 0.1211 m; `T_cn_cnm1` da ZED).
+    Resolução confirmada no bag: **1280×720** (bate). ⚠️ encoding **bgra8** — checar no passo 3.1.
+- [x] **2.2 Montar `imu.yaml`** (Microstrain #1 + ZED) com ruído de datasheet (D3); `rostopic`/`update_rate` corretos.
   - **Verificação:** parse OK; tópicos batem com o bag.
-- [ ] **2.3 `target.yaml` + `dvl0.yaml` por bag** (`T_dvl_imu` inicial do xacro, `sound_speed`, caminho do CSV,
+    ✓ `config01/imu.yaml` (Microstrain 3DM-GV7, `/imu/data`, rate 200, ruído provisório). 1º run com
+    **Microstrain-só** (ZED IMU adicionada depois — D5). Valores de ruído a reavaliar (Allan variance).
+- [x] **2.3 `target.yaml` + `dvl0.yaml` por bag** (`T_dvl_imu` inicial do xacro, `sound_speed`, caminho do CSV,
   gating). `target.yaml` = o AprilGrid usado.
   - **Verificação:** parse OK (via `DvlParameters`); `dvl0.yaml` aponta para o `dvl0X.csv` certo.
+    ✓ `config01/target.yaml` (AprilGrid 6×6, tagSize 0.088 — **confirmar** que bate com o alvo físico) +
+    `config01/dvl0.yaml` (csv `/data/.../dvl0_calib01.csv`, sound_speed 1500, T_dvl_imu identidade).
 
 ## Fase 3 — Calibração câmera-IMU (por bag)
 
-- [ ] **3.1 🐳 Rodar `kalibr_calibrate_imu_camera` no bag 01** (Microstrain ref + ZED; D5). Depurar aqui.
+- [x] **3.1 🐳 Rodar `kalibr_calibrate_imu_camera` no bag 01** (Microstrain ref + ZED; D5). Depurar aqui.
   - **Verificação:** conclui; **erro de reprojeção** em faixa aceitável (CA2); `T_cam_imu` plausível vs. xacro;
     gera `*-camchain-imucam.yaml` + `*-imu.yaml`.
+    ✓ Convergiu (Microstrain-só). Reprojeção 1.53/1.59 px (mediana ~1.24/1.37 — **elevada pelo k3 dropado**,
+    D7). Accel 0.036 m/s², giro 0.0063 rad/s, **gravidade 9.807** ✓. `T_cam0_imu0` trans `[0.128,0.021,-0.135]`
+    (≈0.187 m vs. xacro ~0.227 m — ordem certa). timeshift 16.8 ms. Saídas em `data/output/piscina_calib_01-*`.
+  - **Ajustes de prep necessários (registrados):** mono8 na conversão; **rebasing de timestamps (D8)**;
+    **`--timeoffset-padding 0.1`** (timeshift real ~56 ms > 30 ms padrão).
 - [ ] **3.2 🐳 Rodar nos bags 02, 03, 04.**
   - **Verificação:** os 4 concluem; reprojeção registrada por bag.
 

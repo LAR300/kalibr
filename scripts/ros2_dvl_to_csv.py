@@ -97,7 +97,7 @@ def list_topics(bagdir, typestore):
             print("  {0:45s} {1:35s} {2}".format(topic, msgtype, count))
 
 
-def extract(bagdir, dvl_topic, out_csv, timestamp_source, typestore):
+def extract(bagdir, dvl_topic, out_csv, timestamp_source, typestore, t0_ns=0):
     n = 0
     with AnyReader([Path(bagdir)], default_typestore=typestore) as reader:
         conns = [c for c in reader.connections if c.topic == dvl_topic]
@@ -116,6 +116,7 @@ def extract(bagdir, dvl_topic, out_csv, timestamp_source, typestore):
                     ts_ns = int(bagtime)
                 else:
                     ts_ns = header_ns
+                ts_ns = ts_ns - t0_ns   # rebasear (mesmo t0 do bag ROS 1; ver D8)
                 # velocidade
                 v = msg.velocity
                 # covariancia (flat; pad/trunca para 9). Pode ser numpy array -> nao usar 'or'.
@@ -139,6 +140,8 @@ def main():
     ap.add_argument("--timestamp", choices=["header", "bag"], default="header",
                     help="Fonte do timestamp: header.stamp (default) ou tempo de gravação do bag.")
     ap.add_argument("--list-topics", action="store_true", help="Apenas listar os tópicos e sair.")
+    ap.add_argument("--t0-ns", type=int, default=0,
+                    help="Subtrai este t0 (ns) do timestamp — use o MESMO valor T0_NS do ros2_to_ros1_kalibr.py (D8).")
     args = ap.parse_args()
 
     typestore = make_typestore()
@@ -148,7 +151,7 @@ def main():
         list_topics(bagdir, typestore)
         return 0
 
-    extract(bagdir, args.dvl_topic, args.out, args.timestamp, typestore)
+    extract(bagdir, args.dvl_topic, args.out, args.timestamp, typestore, t0_ns=args.t0_ns)
     return 0
 
 
