@@ -56,6 +56,8 @@ Leia sob demanda, conforme a tarefa:
 - **Fluxo CAM-IMU + integração com AQUA-SLAM:** `.ai/docs/domain/cam-imu-calibration.md`
 - **Calibração de DVL (`kalibr_calibrate_dvl`, extensão do fork):** `.ai/docs/domain/dvl-calibration.md`
   (guia de uso: `scripts/docs/kalibr_dvl.md`; spec: `.ai/specs/dvl-calibration/`)
+- **Premissas e fontes de erro (o que é assumido e não estimado):** `.ai/docs/domain/premissas-e-fontes-de-erro.md`
+  — ler **antes de planejar nova coleta de dados** ou ao investigar resultado suspeito.
 
 ## Regras inegociáveis
 
