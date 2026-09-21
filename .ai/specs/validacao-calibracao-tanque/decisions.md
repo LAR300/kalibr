@@ -65,6 +65,38 @@
   cam-IMU. **TODO (futuro):** calibrar os intrínsecos com o Kalibr no bag (pinhole-radtan e/ou pinhole-equi)
   e comparar reprojeção vs. a ZED-4params. Registrar na consolidação.
 
+### D9 — Descartar o bag 01: o offset temporal câmera-IMU só assenta ~15 min após ligar
+
+- **Contexto:** rodados os 4 bags, o `timeshift_cam_imu` caiu monotonicamente com o horário de gravação:
+  16.78 (18:37) → 9.07 (18:44) → 5.96 (18:51) → 4.29 ms (19:00). Um ajuste
+  `ts = 3.40 + 13.37·exp(-t/515 s)` fecha com RMS 0.003 ms (ressalva: 4 pontos, 3 parâmetros — o
+  decaimento monotônico é o fato; a forma exata é sugestiva).
+- **Decisão:** tratar o **bag 01 como outlier** (sistema "frio", offset 5× acima do assentado) e
+  consolidar sobre os bags 02–04. Em capturas futuras, **aguardar ~15–20 min** (≈3 constantes de tempo)
+  entre ligar o sistema e gravar.
+- **Por quê:** excluir o bag 01 derruba a dispersão da translação em x de **2.1 cm para 0.7 cm** — a maior
+  parte da "não-repetibilidade" era esse transitório, não falta de excitação. Um offset temporal errado é
+  absorvido pela translação (a rotação é insensível), que é justamente o parâmetro sob suspeita.
+- **Consequências:** a ZED aparenta usar timestamping por software com latência que assenta; sem
+  sincronização por hardware, cada bag tem seu próprio alinhamento. Escolher o bag também pelo relógio
+  assentado, não só pelo resíduo. Vale reavaliar se o `timeshift` deve entrar no AQUA-SLAM (hoje sem campo).
+
+### D10 — O xacro erra a POSIÇÃO da Microstrain (~13 cm), não a orientação
+
+- **Contexto:** a nota inicial do bag 01 (`data/output/piscina_calib_01-analise-camimu.txt`) concluiu que o
+  xacro estava impreciso na **orientação** da Microstrain (~43°). **Essa conclusão estava errada:** comparava
+  `T_ic` (frame da IMU) com um vetor em `base_link` sem passar pela convenção de *optical frame* da ZED
+  (x=direita, y=baixo, z=frente) nem pela geometria interna do `zed_macro`.
+- **Decisão:** registrar que (a) a **orientação confere** — 1.52° ± 0.22° entre os 4 bags, compatível com
+  `rpy=0 0 0` e com tolerância de fabricação; (b) a **posição não confere** — viés de 13.5 cm com dispersão
+  de 1.7 cm entre os bags 02–04 (razão 7.7×), dominado por **x (~12–13 cm)**.
+- **Por quê:** o viés é 7.7× a incerteza da medida — os bags discordam entre si muito menos do que todos
+  discordam do desenho. É a assinatura de erro de cota, não de ruído de estimação.
+- **Consequências:** conferir no CAD a cota da Microstrain (o xacro a põe em `x=-0.09439`; os dados apontam
+  para `x≈+0.02`) e o ponto que `zed_node_camera_link` representa. **A calibração mede a posição relativa**,
+  então não distingue qual dos dois corpos está fora do lugar. Impacta o DVL: o lever-arm nominal
+  Microstrain→DVL do xacro (`[0.094, 0, -0.129]`) herda o mesmo erro e vale como referência frouxa.
+
 ### D6 — Consolidação: reportar os 4, escolher por resíduo/consistência
 
 - **Decisão:** apresentar os resultados dos 4 bags (média ± desvio) e escolher a calibração final como o

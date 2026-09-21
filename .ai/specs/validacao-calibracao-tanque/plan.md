@@ -20,12 +20,15 @@
 
 ## Fase 1 — Preparo dos dados (4 bags)
 
-- [ ] **1.1 💻 Extrair o CSV do DVL dos 4 bags** com `ros2_dvl_to_csv.py` (bag 01 já feito).
+- [x] **1.1 💻 Extrair o CSV do DVL dos 4 bags** com `ros2_dvl_to_csv.py` (bag 01 já feito).
   - **Verificação:** 4 arquivos `dvl0X.csv`; contagem de amostras coerente (~2 k cada) e válidas reportadas.
-- [ ] **1.2 💻 Converter ROS 2 → ROS 1** (imagens estéreo + IMUs) dos 4 bags, excluindo `/dvl/data` e
+    ✓ `dvl0_calib01..04.csv`: 2116 / 2199 / 2070 / 2509 amostras. Cada um rebaseado com o **mesmo t0**
+    do bag ROS 1 correspondente (D8).
+- [x] **1.2 💻 Converter ROS 2 → ROS 1** (imagens estéreo + IMUs) dos 4 bags, excluindo `/dvl/data` e
   `/lar/bar/depth` (D1). Testar primeiro no bag 01.
   - **Verificação:** `rosbag info` do bag ROS 1 lista os tópicos de imagem + `/imu/data` + `/zed/.../imu/data`
     com contagens coerentes; sem erro de tipo custom.
+    ✓ Os 4 convertidos (mono8, `--zero-start`). Só Microstrain (`/imu/data`) — a ZED IMU segue fora (D5).
 
 ## Fase 2 — Configs de entrada (Kalibr)
 
@@ -53,8 +56,18 @@
     (≈0.187 m vs. xacro ~0.227 m — ordem certa). timeshift 16.8 ms. Saídas em `data/output/piscina_calib_01-*`.
   - **Ajustes de prep necessários (registrados):** mono8 na conversão; **rebasing de timestamps (D8)**;
     **`--timeoffset-padding 0.1`** (timeshift real ~56 ms > 30 ms padrão).
-- [ ] **3.2 🐳 Rodar nos bags 02, 03, 04.**
+- [x] **3.2 🐳 Rodar nos bags 02, 03, 04.**
   - **Verificação:** os 4 concluem; reprojeção registrada por bag.
+    ✓ Os 4 concluíram. Reprojeção cam0/cam1 (mean px): 01 = 1.53/1.59 · 02 = 1.39/1.44 ·
+    03 = 1.38/1.43 · **04 = 1.29/1.35** (melhor). Análise cross-bag completa em
+    `data/output/analise-crossbag-camimu.txt`; comparador em `scripts/compare_calibrations.py`.
+  - **Achado 1 — timeshift assenta ao longo da sessão (D9).** 16.78 → 9.07 → 5.96 → 4.29 ms,
+    monotônico com o horário de gravação. O **bag 01 é outlier** (sistema frio); excluí-lo derruba a
+    dispersão da translação em x de 2.1 cm para 0.7 cm.
+  - **Achado 2 — o xacro está errado na POSIÇÃO da Microstrain (D10)**, não na orientação.
+  - **Nota de ambiente:** sem X11, a geração do PDF quebra (`TclError: couldn't connect to display`)
+    **depois** de salvar os YAMLs. Usar `MPLBACKEND=Agg` no `docker exec`. Bags 02 e 03 ficaram sem PDF
+    por isso (números íntegros no `results.txt`); 04 tem PDF.
 
 ## Fase 4 — Calibração de DVL (por bag)
 
@@ -66,9 +79,13 @@
 
 ## Fase 5 — Comparação e consolidação
 
-- [ ] **5.1 💻 Script de comparação cross-bag** (R5): lê os 4 resultados e reporta `T_cam_imu`, `T_dvl_imu`
+- [x] **5.1 💻 Script de comparação cross-bag** (R5): lê os 4 resultados e reporta `T_cam_imu`, `T_dvl_imu`
   (ângulo de rotação + translação), `velocity_scale` e timeshifts — média ± desvio entre os bags.
   - **Verificação:** tabela impressa; dispersão calculada.
+    ✓ `scripts/compare_calibrations.py` (host, só numpy). Cobre o **cam-IMU**: por bag + média/desvio,
+    projeção nos eixos do `base_link` e comparação com o nominal do xacro+`zed_macro`. O veredito separa
+    duas perguntas: *o CAD está errado?* (viés ÷ dispersão) e *com que precisão sabemos a correção?*
+    (dispersão). ⏸️ Falta estender para as saídas do **DVL** quando a Fase 4 rodar.
 - [ ] **5.2 Avaliar consistência + xacro + escala** (CA4/CA5): fixar as tolerâncias com base nos números;
   comparar com o xacro (guia) e a escala vs. `sound_speed`.
   - **Verificação:** dispersão dentro de faixa razoável (a definir); desvios grandes → investigar (excitação/gating/sinc).

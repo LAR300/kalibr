@@ -21,7 +21,23 @@
 - **Rotação IMU↔DVL / Microstrain 180°Z:** o xacro comenta "180° em Z" mas o joint tem `rpy=0 0 0`.
   Ambiguidade de rotação — o `T_dvl_imu` inicial do `dvl0.yaml` começa identidade (a ferramenta estima). (REAVALIAR)
 
-## Estado (retomar amanhã) — bag 01
+## Estado — Fase 3 concluída (4 bags calibrados em câmera-IMU)
+
+- ✅ Prep dos 4 bags (ROS 1 + CSV do DVL rebaseados com o mesmo t0). mcap extraídos apagados; zips preservados.
+- ✅ `kalibr_calibrate_imu_camera` nos 4. Resultados e leitura em `data/output/analise-crossbag-camimu.txt`.
+- **Calibração final = bag 04** (reprojeção 1.29/1.35 px, timeshift assentado 4.29 ms, 320 s).
+- **Bag 01 descartado** como outlier (relógio não assentado — D9).
+- **CAD:** orientação confere (1.52°±0.22°); **posição da Microstrain erra ~13 cm**, dominado por x (D10).
+- ⏭️ **PRÓXIMO: Fase 4 (DVL)** — `kalibr_calibrate_dvl` reusando o cam-IMU **do mesmo bag** (Modo A).
+  Começar pelo bag 04. Lembrar: `MPLBACKEND=Agg` no `docker exec` (senão o PDF quebra no fim)
+  e `--timeoffset-padding 0.1`. Falta criar `dvl0.yaml` por bag (apontando para `dvl0_calib0X.csv`).
+
+## Perguntas abertas para o usuário
+- Vale conferir no CAD a cota da Microstrain em x (xacro: `-0.09439`; dados: `≈ +0.02`) e o ponto que
+  `zed_node_camera_link` representa (centro do corpo? furo de fixação?).
+- A ZED tem sincronização por hardware com a Microstrain? O assentamento do timeshift sugere que não.
+
+## Estado anterior (histórico) — bag 01
 - ✅ Prep: `data/output/piscina_calib_01.bag` (mono8, rebaseado, T0_NS=1785350248197642944) +
   `dvl0_calib01.csv` (rebaseado com o mesmo t0). mcap extraído já apagado (zip preservado).
 - ✅ Cam-IMU concluído: `data/output/piscina_calib_01-camchain-imucam.yaml` + `-imu.yaml`.
