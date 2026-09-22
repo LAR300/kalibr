@@ -33,19 +33,51 @@ import numpy as np
 
 # ---------------------------------------------------------------- nominal (CAD)
 # petro_rov.urdf.xacro
-P_ZED_LINK = np.array([0.133, 0.0, -0.015])      # base_link -> zed_node_camera_link
-P_IMU = np.array([-0.09439, 0.0, -0.01112])      # base_link -> imu_link (Microstrain)
-P_DVL = np.array([0.0, 0.0, -0.13992])           # base_link -> dvl_link
-# zed_macro.urdf.xacro, model=zed2i
+# ⚠️ O nominal do CAD e' POR ESTRUTURA. O xacro do ROV mudou entre os datasets: na coleta v3 a
+# posicao da IMU externa (Microstrain) foi alterada. Comparar um dataset contra o nominal de outra
+# estrutura produz um numero sem significado -- ja aconteceu nesta investigacao.
+# Por isso o nominal e' ENTRADA (--nominal <arquivo>), nao constante. O built-in abaixo e' o da
+# estrutura ANTIGA (datasets v1/v2) e so' e' usado com aviso explicito.
+NOMINAL_V1V2 = dict(
+    zed_link=[0.133, 0.0, -0.015],       # base_link -> zed_node_camera_link
+    imu=[-0.09439, 0.0, -0.01112],       # base_link -> imu_link (Microstrain)
+    dvl=[0.0, 0.0, -0.13992],            # base_link -> dvl_link
+)
+# zed_macro.urdf.xacro, model=zed2i -- geometria INTERNA da camera, igual em todas as estruturas
+# (mesmo modelo de sensor), entao esta parte nao muda com o xacro do ROV.
 ZED_HEIGHT = 0.03
 ZED_BASELINE = 0.12
 ZED_OPTICAL_OFFSET_X = -0.01
 
-P_ZED_CENTER = P_ZED_LINK + np.array([0.0, 0.0, ZED_HEIGHT / 2])
-P_CAM_NOM = {
-    0: P_ZED_CENTER + np.array([ZED_OPTICAL_OFFSET_X, ZED_BASELINE / 2, 0.0]),
-    1: P_ZED_CENTER + np.array([ZED_OPTICAL_OFFSET_X, -ZED_BASELINE / 2, 0.0]),
-}
+
+def montar_nominal(d):
+    """De {zed_link, imu, dvl} (base_link) para as posicoes nominais das cameras."""
+    zed_link = np.array(d["zed_link"], dtype=float)
+    centro = zed_link + np.array([0.0, 0.0, ZED_HEIGHT / 2])
+    cams = {0: centro + np.array([ZED_OPTICAL_OFFSET_X, ZED_BASELINE / 2, 0.0]),
+            1: centro + np.array([ZED_OPTICAL_OFFSET_X, -ZED_BASELINE / 2, 0.0])}
+    return np.array(d["imu"], dtype=float), np.array(d.get("dvl", [0, 0, 0]), dtype=float), cams
+
+
+def ler_nominal(path):
+    """Le um arquivo simples 'chave: x y z' por linha (sem depender de PyYAML)."""
+    d = {}
+    with open(path) as fh:
+        for linha in fh:
+            linha = linha.split("#")[0].strip()
+            if not linha or ":" not in linha:
+                continue
+            k, v = linha.split(":", 1)
+            vals = v.replace(",", " ").replace("[", " ").replace("]", " ").split()
+            if len(vals) == 3:
+                d[k.strip()] = [float(x) for x in vals]
+    faltando = {"zed_link", "imu"} - set(d)
+    if faltando:
+        sys.exit("arquivo de nominal sem as chaves: %s" % ", ".join(sorted(faltando)))
+    return d
+
+
+P_IMU, P_DVL, P_CAM_NOM = montar_nominal(NOMINAL_V1V2)
 
 # optical frame (x=direita, y=baixo, z=frente) -> base_link (x=frente, y=esq, z=cima)
 R_BASE_OPT = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], dtype=float)
@@ -120,7 +152,22 @@ def main():
                     help="Pasta com os resultados do Kalibr (default: %(default)s).")
     ap.add_argument("--bags", nargs="+", default=None,
                     help="Sufixos dos bags (ex.: 01 02 03 04). Default: todos os encontrados.")
+    ap.add_argument("--nominal", default=None,
+                    help="Arquivo com o nominal do CAD desta estrutura ('zed_link: x y z', "
+                         "'imu: x y z', 'dvl: x y z'). SEM isto usa o da estrutura ANTIGA (v1/v2), "
+                         "com aviso -- o xacro do ROV mudou no v3.")
     args = ap.parse_args()
+
+    global P_IMU, P_DVL, P_CAM_NOM
+    if args.nominal:
+        P_IMU, P_DVL, P_CAM_NOM = montar_nominal(ler_nominal(args.nominal))
+        print("nominal do CAD: %s\n" % args.nominal)
+    else:
+        print("=" * 100)
+        print("AVISO: usando o nominal da estrutura ANTIGA (datasets v1/v2).")
+        print("       O xacro do ROV MUDOU no v3 (a IMU externa foi reposicionada).")
+        print("       Para v3, passe --nominal <arquivo>; a secao 2 abaixo NAO vale sem isso.")
+        print("=" * 100 + "\n")
 
     if args.bags:
         names = ["piscina_calib_%s" % b for b in args.bags]

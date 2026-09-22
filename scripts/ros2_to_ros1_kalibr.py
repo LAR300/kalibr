@@ -99,6 +99,7 @@ def main():
 
     counts = {t: 0 for t in wanted}
     seqs = {t: 0 for t in wanted}
+    skipped = {}
 
     with AnyReader([bagdir]) as reader, Writer(out) as writer:
         t0 = 0 if args.keep_abs_time else int(reader.start_time) - 2_000_000_000
@@ -124,6 +125,11 @@ def main():
                 tns = 0
             hdr = mk_header(msg.header.frame_id, tns, seqs[t])
             if t in args.image_topics:
+                # O ZED publica ocasionalmente um frame vazio (visto 1x em 3325 no bag
+                # 17-15-26 do v3). Escrever isso quebra o extrator do Kalibr.
+                if msg.width == 0 or msg.height == 0 or len(msg.data) == 0:
+                    skipped[t] = skipped.get(t, 0) + 1
+                    continue
                 gray = to_mono8(msg)
                 out_msg = Image(header=hdr,
                                 height=msg.height, width=msg.width, encoding="mono8",
@@ -146,7 +152,8 @@ def main():
 
     print("Escrito {0}".format(out))
     for t in sorted(counts):
-        print("  {0}: {1} msgs".format(t, counts[t]))
+        print("  {0}: {1} msgs{2}".format(t, counts[t],
+              "  (pulados {0} frames vazios)".format(skipped[t]) if skipped.get(t) else ""))
     return 0
 
 

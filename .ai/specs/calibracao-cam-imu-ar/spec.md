@@ -113,6 +113,16 @@ de método ou de ferramenta, não de água. Só depois de ter um cam-IMU sólido
 
 ## Perguntas em aberto
 
+- **🔴 NEEDS CLARIFICATION (xacro novo) — BLOQUEIA a comparação com o CAD:** as gravações do v3 foram
+  feitas com uma **nova estrutura**; o xacro do ROV mudou e a **posição da IMU externa (Microstrain)
+  é outra**. A câmera ZED é o mesmo modelo, então a geometria interna dela (`zed_macro`) não muda.
+  Precisamos das cotas novas em `base_link`: `zed_node_camera_link` e `imu_link`.
+  - **Consequência:** qualquer comparação do v3 contra o nominal antigo é **sem significado**. O
+    `compare_calibrations.py` agora exige `--nominal <arquivo>` e emite aviso quando cai no built-in
+    da estrutura antiga.
+  - **Não bloqueia** o resto da spec: convergência (CA4), consistência entre os dois bags (CA3),
+    fábrica × Kalibr (CA5) e a verificação contra o `zed_macro` (CA6) independem do xacro do ROV.
+
 - **NEEDS CLARIFICATION (tagSize):** os 0.088 m do AprilGrid nunca foram medidos fisicamente. Define
   a escala métrica de tudo. **Não bloqueia esta spec** — como os dois bags usam o mesmo alvo, um erro
   de escala afeta os dois igualmente e não atrapalha o teste de consistência (R5). Mas os valores
