@@ -97,3 +97,24 @@
   auto-rotula e aparece sozinha na tabela do comparador. Sem duplicar bags de 6 GB.
 - **Consequências:** convenção de nome `v3_<bag>__<imu>-<intrinsecos>`, por exemplo
   `v3_raw__micro-fabrica`. Ver `data/output/README.md`.
+
+### D9 — `--recompute-camera-chain-extrinsics` em toda a matriz
+
+- **Contexto:** o piloto convergiu de forma saudável (`lambda` 0.0046, 8 iteracoes, parada por
+  tolerancia) mas com reprojecao de 3.2 px. O cam1 partia de 6.73 px enquanto o cam0 partia de
+  1.69 px — assinatura de par estereo inconsistente com baseline congelado.
+- **Diagnostico (medido, nao suposto):** o `T_cn_cnm1` que derivei do campo `R` do `camera_info`
+  tinha erro de **0.3890°** de rotacao, o que a fx=957.79 equivale a **6.5 px** — batendo com os
+  6.73 px observados. O baseline em modulo estava certo (0.27 mm); o erro era so' na rotacao.
+  Conclusao: **o campo `R` do `camera_info` do topico raw nao da' a rotacao estereo** da forma
+  assumida, e nao deve ser usado para montar `T_cn_cnm1`.
+- **Decisão:** rodar toda a matriz com `--recompute-camera-chain-extrinsics`, deixando o Kalibr
+  estimar o extrinseco estereo, e usar o `T_cn_cnm1` do `camera_info` apenas como chute inicial.
+- **Por quê:** libera 4.8× de reprojecao (3.2 → 0.68 px) e leva todos os residuos normalizados para
+  abaixo de 1. Sem isso, um erro de conveccao no camchain fica congelado e contamina em silencio.
+- **Consequências:** o baseline deixa de ser premissa e passa a ser resultado (verificavel contra os
+  0.1201 m de fabrica — o estimado deu 0.11982 m, 0.27 mm de diferenca). Efeito colateral positivo:
+  cam1 deixa de ser uma medida derivada do cam0 e vira semi-independente.
+- **Ressalva:** o extrinseco camera-IMU mostrou-se **robusto** ao erro de baseline — mudou apenas
+  1.0 mm entre as duas execucoes. Ou seja, a reprojecao alta era sintoma visivel de um problema que
+  quase nao contaminava o resultado de interesse.
