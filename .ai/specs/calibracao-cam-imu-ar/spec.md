@@ -97,19 +97,32 @@ de método ou de ferramenta, não de água. Só depois de ter um cam-IMU sólido
 
 ## Critérios de aceitação
 
-- [ ] **CA1:** As execuções de R1–R3 rodam nos dois bags e cada uma termina com resultado **ou** com
-      o motivo da falha registrado.
-- [ ] **CA2:** Existe, para cada execução, a config exata usada preservada junto do resultado, e o
-      conjunto é navegável por bag / IMU / fonte de intrínsecos (R9).
-- [ ] **CA3:** Há uma comparação lado a lado de `T_cam_imu` e `timeshift` entre os dois bags, para
-      cada combinação, com a dispersão explicitada.
-- [ ] **CA4 (o teste central):** Fica claro se a calibração **converge de forma saudável** fora
+- [x] **CA1:** As execuções de R1–R3 rodam nos dois bags e cada uma termina com resultado **ou** com
+      o motivo da falha registrado. ✓ 10 de 11 concluídas; a 11ª em re-execução após o travamento
+      da máquina (causa e correção em `resultados.md` §9).
+- [x] **CA2:** Existe, para cada execução, a config exata usada preservada junto do resultado, e o
+      conjunto é navegável por bag / IMU / fonte de intrínsecos (R9). ✓ layout
+      `data/output/runs/v3_<bag>__<imu>-<intrinsecos>/` com `config/` e symlink (D8).
+- [x] **CA3:** Há uma comparação lado a lado de `T_cam_imu` e `timeshift` entre os dois bags, para
+      cada combinação, com a dispersão explicitada. ✓ tabela em `resultados.md` §2.
+      ⚠️ **A consistência entre os bags NÃO foi atingida** (~43 mm) — mas o bag `rect` está
+      mal-condicionado, então não é teste justo de repetibilidade. Serviu para sinalizar a
+      configuração quebrada. A consistência **interna** do `raw` (fábrica × Kalibr) é de 6 mm.
+- [x] **CA4 (o teste central):** Fica claro se a calibração **converge de forma saudável** fora
       d'água — em contraste com o `lambda` de 33 209 e a não-convergência do v2.
-- [ ] **CA5:** O erro de reprojeção com os intrínsecos estimados pelo Kalibr é reportado ao lado do
+      ✓ **SIM, no bag `raw`:** 5 iterações, `lambda` **0.12**, parada por tolerância, resíduos
+      normalizados todos < 1. Cinco ordens de grandeza melhor que o v2.
+      ⚠️ **NÃO no bag `rect`:** `lambda` 4 918–11 919 mesmo com os intrínsecos corrigidos.
+- [x] **CA5:** O erro de reprojeção com os intrínsecos estimados pelo Kalibr é reportado ao lado do
       obtido com os de fábrica, permitindo julgar se vale recalibrar.
-- [ ] **CA6:** A pose câmera↔IMU-da-ZED é confrontada com o nominal do `zed_macro` (R8).
-- [ ] **CA7:** Está escrito, em uma conclusão explícita, se o pipeline funciona fora d'água e o que
-      isso implica para o caso submerso (R10).
+      ✓ **Diferença de 0.001–0.007 px: NÃO vale a pena recalibrar.** O `radtan`-4 ajustado ao modelo
+      racional do SDK é equivalente a uma calibração completa. Economiza ~1 h por bag.
+- [x] **CA6:** A pose câmera↔IMU-da-ZED é confrontada com o nominal do `zed_macro` (R8).
+      ✓ `scripts/check_zed_imu.py`. As duas execuções `raw` concordam em **2 mm** entre si mas ficam
+      em **2×** o nominal (46–48 mm contra 23.2 mm). ⚠️ **Conclusão pendente**: o ruído da IMU da ZED
+      foi inflado ~4.5× demais, o que sub-pesa justamente quem observa o lever-arm.
+- [x] **CA7:** Está escrito, em uma conclusão explícita, se o pipeline funciona fora d'água e o que
+      isso implica para o caso submerso (R10). ✓ `resultados.md` §1 e §11.
 
 ## Perguntas em aberto
 

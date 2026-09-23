@@ -111,14 +111,23 @@ bancada, em ambiente termicamente estável**. É a coleta de melhor custo-benef�
 | Timestamp do DVL | **usa `header.stamp`** | ⚠️ ver abaixo |
 | `--timeoffset-padding 0.1` | parâmetro do solver | Não físico; só precisa ser folgado |
 
-### ⚠️ Bug: o extrator do DVL ignora `time_of_validity`
+### 🔄 NÃO é bug: o extrator do DVL usa `header.stamp` — e está certo
 
-A spec `dvl-calibration` (R5) exige usar o `time_of_validity` do A50 como timestamp da amostra.
-O `scripts/ros2_dvl_to_csv.py:112-118` usa **`header.stamp`** (instante em que o driver publicou),
-que embute o tempo de voo acústico + latência de processamento. A 9 Hz, isso são dezenas de ms.
+Registrei antes que usar `header.stamp` em vez do `time_of_validity` (exigido pela R5 da spec
+`dvl-calibration`) era um bug. **A medição desmente.** O `time_of_validity` do A50 está no relógio
+**interno** dele, sem sincronia com o sistema:
 
-Um atraso **constante** é absorvido pelo `timeshift_dvl_imu` estimado; um atraso **variável** vira ruído
-que degrada o lever-arm. Corrigir é barato e não exige coleta nova.
+```
+time_of_validity[0] = 1716816236492214 us -> 2024-05-27
+header.stamp[0]     = 1789742354.741 s    -> 2026-09-18
+diferença de época  = 72.926.118 s = 2.32 anos
+```
+
+Usá-lo como timestamp absoluto seria catastrófico. **O uso atual está correto.**
+
+O refinamento que *faria* sentido é usar o `tov` só para o espaçamento **relativo**, ancorado à
+época do header: o jitter do intervalo cai de **20.6 ms → 17.5 ms** (std), com o offset
+`header − tov` praticamente constante (std 8.9 ms). Melhoria modesta, opcional.
 
 ### O acoplamento timeshift ↔ lever-arm (já observado)
 
@@ -202,3 +211,98 @@ acredita em cada número.
 
 > **Ordem importa.** Coletar mais dados antes de fechar A e B só produz mais bags com os mesmos vieses
 > sistemáticos. Nenhuma quantidade de dados corrige um `tagSize` errado.
+
+---
+
+## Atualização — o que o dataset v3 (fora d'água) confirmou e derrubou
+
+> Fonte: `.ai/specs/calibracao-cam-imu-ar/resultados.md`. Dois bags gravados **fora d'água**
+> olhando o alvo, justamente para separar os efeitos da água dos do método.
+
+### ✅ CONFIRMADO — a refração era o problema dominante
+
+O mesmo código, com os mesmos sensores e as mesmas flags, converge de forma radicalmente diferente:
+
+| | v2 submerso | v3 ar (bag raw) |
+|---|---|---|
+| iterações | 17+ sem convergir | **5** |
+| `lambda` final | **33 209** | **0.12** |
+| reprojeção | — | **0.67 px** |
+
+Cinco ordens de grandeza de diferença no condicionamento. A seção "Modelo óptico" acima previa que
+a refração de porta plana não é representável por `radtan` e é dependente da distância; a v3
+confirma que esse era o fator dominante, não um detalhe.
+
+### ✅ CONFIRMADO — excitação rotacional escala com ω², e importa
+
+Subir de 3.8–7.6 °/s (v2) para ~11 °/s (v3) e tornar a excitação **isotrópica** (razão forte/fraca
+de 2.4× para 1.4×) teve efeito mensurável além do lever-arm: o **prior de timeshift**, que no v2
+saía inconsistente entre as duas câmeras (95 vs 130 ms, com o estéreo sincronizado a 1 ms), passou
+a sair **idêntico** (−15.000 ms). O prior vem de correlação cruzada de ‖ω‖, cujo pico achata com
+rotação suave.
+
+### 🔄 DERRUBADO (parcialmente) — "usar intrínsecos de fábrica custa reprojeção"
+
+O registro anterior atribuía a reprojeção alta ao uso dos intrínsecos de fábrica com o k3 dropado.
+A v3 mostra que o problema não era **usar** o de fábrica, era **truncar** o modelo:
+
+- Truncar o `rational_polynomial` (8 coef) para `radtan` (4) dá **989% de erro na borda** —
+  numerador e denominador quase se cancelam, e jogar o denominador fora faz o polinômio explodir.
+- **Ajustar** um `radtan`-4 que reproduza o mapeamento racional (`scripts/rational_to_radtan.py`,
+  resíduo 0.16 px) dá resultado **equivalente a recalibrar com o Kalibr**: diferença de
+  **0.001–0.007 px** na reprojeção final.
+
+> **Recomendação revisada:** usar os intrínsecos de fábrica **com o ajuste racional→radtan**.
+> Rodar `kalibr_calibrate_cameras` custa ~1 h por bag e não paga.
+
+### 🔴 NOVO — o stream retificado do SDK da ZED não serve para calibração
+
+O `camera_info` do tópico `*/gray/rect/` **não descreve** as imagens que ele acompanha:
+
+| | declarado | estimado | significância |
+|---|---|---|---|
+| `cy` | 357.195 | 364.274 ± 0.65 | **10.9σ** (~8 px) |
+| `k1` | 0.0 | 0.0120 ± 0.0011 | **11σ** |
+| `cy` cam0 vs cam1 | devem ser iguais | 364.27 vs 366.51 | 2.5σ |
+
+A última linha é contradição de definição: num par retificado o `cy` das duas câmeras **é** igual,
+por construção. Não é.
+
+**E corrigir os intrínsecos NÃO resolveu:** a execução com os valores estimados ainda ficou com
+`lambda` 4 918. A causa raiz do mal-condicionamento do bag retificado **segue não estabelecida**.
+
+**Regra prática:** gravar em **raw** e deixar o Kalibr lidar com a distorção.
+
+### 🔴 NOVO — modo de falha silenciosa: reprojeção boa com geometria absurda
+
+A execução `rect__zed-fabrica` produziu reprojeção de **0.596 px** (ótima) e um lever-arm
+câmera↔IMU-da-ZED de **429.5 mm** — as duas ficam no mesmo corpo, a ~23 mm.
+
+> **A reprojeção não detecta este erro.** Os indicadores que detectam: o `lambda` final do
+> Levenberg-Marquardt, o resíduo inercial **normalizado** (>1 é bandeira) e a plausibilidade
+> física. Incluir os três em qualquer checagem de sanidade.
+
+Em contraste, o **baseline estéreo** foi recuperado corretamente em **todas** as execuções
+(0.1197–0.1198 m contra 0.1201 de fábrica), inclusive nessa. A geometria estéreo é robusta; o que
+degrada é o braço câmera↔IMU.
+
+### 🔴 NOVO — inflar o ruído da IMU tem custo, não só benefício
+
+A orientação anterior era "inflar é o erro seguro". A v3 mostra o outro lado: com o ruído da IMU da
+ZED inflado ~4.5× demais (resíduo normalizado de acelerômetro em **0.222**), o otimizador sub-pesa
+os termos inerciais e deixa a câmera dominar. Como **é a IMU que observa o lever-arm**, isso o
+deixa mal determinado — o lever-arm da ZED saiu em 2× o nominal do `zed_macro`.
+
+> Inflar continua mais seguro que subestimar, mas **inflar demais degrada justamente o parâmetro de
+> interesse**. O resíduo normalizado é o termômetro: deve ficar perto de 1.
+
+### 🔴 NOVO — o container Docker sem limites derruba a máquina
+
+O `kalibr_zed` rodava com `Memory: 0` e `NanoCpus: 0` (sem teto). Durante a bateria noturna a
+máquina **travou e reiniciou**. Medição posterior: a fase de extração do alvo usa ~5 GB e
+**1373% de CPU** — sem teto, saturava os 20 cores e deixava o servidor X sem fatia (o log registrou
+`your system is too slow` 30 s antes do congelamento).
+
+**Correção:** `docker update --memory 9g --memory-swap 9g --cpus 14 kalibr_zed`.
+`MemorySwap == Memory` dá swap zero ao container: se estourar, o kernel mata o processo dele em vez
+de arrastar a máquina inteira para thrashing.
